@@ -1,0 +1,101 @@
+#!/bin/sh
+# mount.snapshot <id> <mnt>
+#
+# Overlayfs snapshot mount helper
+#
+# - Create a new snapshot overlay at <mnt>/@/<id>
+# - Mount snapshot mount at <mnt>
+# - Append snapshot <id> to <mnt>/@/snapshots
+#
+# * If any mount flags other than -o rw are passed to helper,
+#   it passes the command as is without doing the above
+#
+#-----------------------------------------------------------------------
+#
+# Copyright (C) 2016 CTERA Networks. All Rights Reserved.
+# Author: Amir Goldstein <amir73il@gmail.com>
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#-----------------------------------------------------------------------
+#
+
+id="$1"
+shift
+mnt="${1%/}"
+shift
+
+[ -d "$mnt" ] || exit 1
+
+# No support for mount options at the moment
+if [ -n "$*" -a "$*" != "-o rw" ]; then
+	echo "$*" > /tmp/mount.snapshot.in
+	mount -i -t snapshot "$id" "$mnt" $*
+	exit $?
+fi
+
+# Verify that overlayfs snapshot feature is enabled
+grep -wq 'overlay' /proc/filesystems || modprobe overlay
+grep -wq 'snapshot' /proc/filesystems || exit 1
+
+# TODO: verify snapshot $id is not already mounted
+
+lower="$mnt"
+snapdir="$mnt/@"
+
+cd "$lower" || exit 1
+
+# Relative to $lower to keep overlay mount options shorter
+base="@/$id"
+upper="$base/u"
+work="$base/w"
+snap="$base"
+
+tmpdir=/tmp/snapshot.$$
+tmpsnap="$tmpdir/$id"
+trap "_cleanup" 0 1 2 3 15
+_cleanup()
+{
+	err=$?
+	# Cleanup snapshot $id temp mounts
+	umount -i "$tmpsnap" 2>/dev/null
+	umount -i "$tmpdir" 2>/dev/null
+	umount -i "$snapdir" 2>/dev/null
+	rmdir $tmpdir
+	exit $err
+}
+
+# Create new snapshot dir with empty upper/work
+mkdir -p "$snap" "$upper" "$work" || exit 1
+
+# Whiteout snapshots dir inside upper
+[ -c "$upper/@" ] || mknod "$upper/@" c 0 0 || exit 1
+
+# Make shared mount clone of the real lower mount
+mount --bind "$snapdir" "$snapdir"
+mount --make-shared "$snapdir"
+mkdir -p "$tmpdir"
+mount --bind "$snapdir" "$tmpdir"
+
+# Mount the snapshot overlay and snapshot mount
+mount -i -t overlay "snapshot@$id" -o"lowerdir=$lower,upperdir=$upper,workdir=$work" \
+	"$snap" || exit 1
+mount -i -t snapshot "snapshot@$id" -o"upperdir=$lower,snapshot=$snap" \
+	"$mnt" || exit 1
+
+# Write new snapshot id to snapshots stack
+snapshots="$snapdir/snapshots"
+grep -qs "^$id$" "$snapshots" || echo "$id" >> "$snapshots"
+
+# Bind the (now covered) snapshot overlay above the snapshot mount
+mount --bind "$tmpsnap" "$mnt/$snap" || exit 1

@@ -1,0 +1,50 @@
+#!/bin/sh
+# umount.snapshot <mnt>
+#
+# Overlayfs snapshot umount helper
+#
+# - Unmount snapshot overlays listed in <mnt>/@/snapshots
+# - Unmount snapshot mount at <mnt>
+#
+#-----------------------------------------------------------------------
+#
+# Copyright (C) 2016 CTERA Networks. All Rights Reserved.
+# Author: Amir Goldstein <amir73il@gmail.com>
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#-----------------------------------------------------------------------
+#
+
+mnt="${1%/}"
+
+[ -d "$mnt" ] || exit 1
+
+snapdir="$mnt/@"
+snapshots="$snapdir/snapshots"
+
+# TODO: verify snapshot $id is mounted
+
+umount_snapshots()
+{
+	[ -s "$snapshots" ] || return
+	cat "$snapshots" | while read id; do
+		umount -i "$snapdir/$id" 2>/dev/null
+	done
+}
+
+umount_snapshots
+umount -i "$mnt"
+# Repeat in case mount.snapshot cleanup failed
+umount_snapshots
+umount -i "$snapdir"
