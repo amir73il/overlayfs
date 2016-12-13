@@ -131,7 +131,7 @@ mount -i -t snapshot "snapshot@$id" -o"upperdir=$lower,snapshot=$snap" \
 grep -qs "^$id$" "$snapshots" || echo "$id" >> "$snapshots"
 
 # Bind the (now covered) snapshot overlay above the snapshot mount
-mount --bind "$tmpsnap" "$mnt/$snap" || exit 1
+mount --bind -r "$tmpsnap" "$mnt/$snap" || exit 1
 
 # Mount older snapshots
 mount_old_snapshots
