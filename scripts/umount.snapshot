@@ -30,6 +30,15 @@ mnt="${1%/}"
 
 [ -d "$mnt" ] || exit 1
 
+# umount.snapshot helper should not take care of mounts
+# not created by mount.snapshot helper. Use the snapshot@<id>
+# dev argument as indication to helper aided snapshot mount.
+# If this is an unfamiliar snapshot mount bypass helper.
+if ! grep -q "^snapshot@\S\+ $mnt snapshot" /proc/mounts; then
+	echo "$*" > /tmp/umount.snapshot.in
+	umount -i $*
+	exit $?
+fi
 
 snapdir="$mnt/@"
 snapshots="$snapdir/.snapshots"
