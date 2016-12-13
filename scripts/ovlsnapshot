@@ -40,7 +40,7 @@ usage()
 	echo
 	echo "$FSTYPE snapshot commands:"
 	echo "usage: $SCRIPT_NAME {create|take}  <path>[[/]@[/]<snapshot-name>] (default-name=<date.time>)"
-	echo "usage: $SCRIPT_NAME {mount|umount} <path>[[/]@[/]<snapshot-name>]"
+	echo "usage: $SCRIPT_NAME {mount|umount} <path>"
 	echo "usage: $SCRIPT_NAME {delete|remove} <path>[/]@[/]<snapshot-name>"
 	echo
 	echo "snapshot command parameter may be given in ZFS style <path>@<snapshot-name>"
@@ -65,6 +65,37 @@ current_snapshot()
 	tail -n 1 $SNAPSHOTS
 }
 
+oldest_snapshot()
+{
+	[ -s $SNAPSHOTS ] || return
+	head -n 1 $SNAPSHOTS
+}
+
+snapshot_is_current()
+{
+	[ -n "$1" ] && [ "$1" = $(current_snapshot) ]
+}
+
+snapshot_is_oldest()
+{
+	[ -n "$1" ] && [ "$1" = $(oldest_snapshot) ]
+}
+
+snapshot_in_stack()
+{
+	[ -s $SNAPSHOTS ] && grep -q "^$1$" $SNAPSHOTS
+}
+
+snapshot_is_deleted()
+{
+	[ -d $SNAPDIR/.$1 ]
+}
+
+snapshot_exists()
+{
+	[ -d $SNAPDIR/$1 ] || snapshot_is_deleted $1 || snapshot_in_stack $1
+}
+
 create_snapshot()
 {
 	local s=$1
@@ -73,6 +104,28 @@ create_snapshot()
 	mkdir -p $SNAPDIR/$s/w || exit 1
 	mknod $SNAPDIR/$s/u/@ c 0 0 || exit 1
 	echo $s >> $SNAPSHOTS || exit 1
+	sync
+}
+
+delete_snapshot()
+{
+	local s=$1
+
+	umount -i $SNAPDIR/$s 2>/dev/null
+	rm -rf $SNAPDIR/$s/w || exit 1
+	mv $SNAPDIR/$s $SNAPDIR/.$s|| exit 1
+	sync
+}
+
+remove_snapshot()
+{
+	local s=$1
+
+	snapshot_is_deleted $s || delete_snapshot $s
+	rm -rf $SNAPDIR/.$s || exit 1
+	grep -v "^$1$" $SNAPSHOTS > $SNAPSHOTS.tmp
+	sync
+	mv $SNAPSHOTS.tmp $SNAPSHOTS
 	sync
 }
 
@@ -113,8 +166,8 @@ fi
 
 if [ ! -z $1 ] && [ $1 != help ] && [ $1_$2 != $1_help ] && \
 	[ $1 != version ] && [ _$1 != _test ] && [ $1 != tests ] ; then
-	[ -n $MNT ] || usage
-	[ -d $MNT ] || error "'$MNT' is not a directory."
+	[ -n "$MNT" ] || usage
+	[ -d "$MNT" ] || error "'$MNT' is not a directory!"
 	export MNT
 	S=$MNT@$snap
 fi
@@ -170,18 +223,18 @@ case "$1" in
 		echo "usage: $SCRIPT_NAME {create|take} <path>[[/]@[/]<snapshot-name>] (default-name=<date.time>)"
 		exit 0
 	fi
-	if [ -z $s ] ; then
+	if [ -z "$snap" ] ; then
 		# default snapshot-name is <date.time>
-		s=$( date -u +%y%m%d.%H%M%S )
-		S=$MNT@$s
+		snap=$( date -u +%y%m%d.%H%M%S )
+		S=$MNT@$snap
 	fi
-	if [ -d $SNAPDIR/$s ] ; then
+	if snapshot_exists $snap ; then
 		error "$1: snapshot $S already exists!"
 	fi
 
 	# For now new snapshot requires umount/mount of all snapshots
 	umount_snapshot
-	create_snapshot $s
+	create_snapshot $snap
 	mount_snapshot
 	echo snapshot $S was created
 	echo .
@@ -194,11 +247,18 @@ case "$1" in
 		echo "usage: $SCRIPT_NAME delete <path>[/]@[/]<snapshot-name>"
 		exit 0
 	fi
-	[ -n "$s" ] || usage
-	if [ -f $SNAPDIR/$s ] ; then
-		$0 umount $s
-		$CHSNAP -S $SNAPDIR/$s || exit 1
+	[ -n "$snap" ] || usage
+	if snapshot_is_deleted $snap ; then
+		error "$1: snapshot $S already deleted!"
 	fi
+	if ! snapshot_exists $snap ; then
+		error "$1: snapshot $S doesn't exist!"
+	fi
+	if snapshot_is_current $snap ; then
+		error "$1: current snapshot $S cannot be deleted!"
+	fi
+
+	delete_snapshot $snap
 	echo snapshot $S is deleted
 	echo .
 	;;
@@ -210,11 +270,18 @@ case "$1" in
 		echo "usage: $SCRIPT_NAME remove <path>[/]@[/]<snapshot-name>"
 		exit 0
 	fi
-	[ -n "$s" ] || usage
-	if [ -f $SNAPDIR/$s ] ; then
-		$0 delete $s
-		rm -f $SNAPDIR/$s 2> /dev/null || exit 1
+	[ -n "$snap" ] || usage
+	if snapshot_is_mounted; then
+		error "$1: cannot remove snapshot while snapshots are mounted!"
 	fi
+	if ! snapshot_exists $snap ; then
+		error "$1: snapshot $S doesn't exist!"
+	fi
+	if ! snapshot_is_oldest $snap ; then
+		error "$1: non-oldest snapshot $S cannot be removed!"
+	fi
+
+	remove_snapshot $snap
 	echo snapshot $S was removed
 	echo .
 	;;
@@ -228,7 +295,7 @@ case "$1" in
 	fi
 	S=$MNT@$(current_snapshot)
 	if snapshot_is_mounted; then
-		error "mount: snapshot $S is already mounted!"
+		error "$1: snapshot $S is already mounted!"
 	fi
 	mount_snapshot
 	echo snapshot $S is mounted
@@ -242,7 +309,7 @@ case "$1" in
 	fi
 	S=$MNT@$(current_snapshot)
 	if ! snapshot_is_mounted; then
-		error "mount: snapshot $S is not mounted!"
+		error "$1: snapshot $S is not mounted!"
 	fi
 	umount_snapshot
 	echo snapshot $S was unmounted
