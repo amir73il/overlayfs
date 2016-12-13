@@ -61,6 +61,7 @@ grep -wq 'snapshot' /proc/filesystems || \
 
 lower="$mnt"
 snapdir="$mnt/@"
+snapshots="$snapdir/.snapshots"
 
 # If we create snapdir, we should remove it on failure
 [ -d "$snapdir" ] || cleanup_snapdir=true
@@ -95,6 +96,19 @@ _cleanup()
 	exit $err
 }
 
+mount_old_snapshots()
+{
+	local old_snapshots=$snap
+
+	# mount snapshots from newest to oldest
+	tac "$snapshots" | while read old; do
+		[ "$old" != "$id" ] || continue
+		old_snapshots="@/$old/u:$old_snapshots"
+		mount -i -t overlay "snapshot@$old" "@/$old" \
+			-o"ro,lowerdir=$old_snapshots"
+	done
+}
+
 # Create new snapshot dir with empty upper/work
 mkdir -p "$snap" "$upper" "$work" || exit 1
 
@@ -114,8 +128,10 @@ mount -i -t snapshot "snapshot@$id" -o"upperdir=$lower,snapshot=$snap" \
 	"$mnt" || exit 1
 
 # Write new snapshot id to snapshots stack
-snapshots="$snapdir/.snapshots"
 grep -qs "^$id$" "$snapshots" || echo "$id" >> "$snapshots"
 
 # Bind the (now covered) snapshot overlay above the snapshot mount
 mount --bind "$tmpsnap" "$mnt/$snap" || exit 1
+
+# Mount older snapshots
+mount_old_snapshots
