@@ -1,0 +1,474 @@
+#!/bin/sh
+#
+# Overlayfs snapshot management script
+#
+#-----------------------------------------------------------------------
+#
+# Copyright (C) 2016 CTERA Networks. All Rights Reserved.
+# Author: Amir Goldstein <amir73il@gmail.com>
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it would be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write the Free Software Foundation,
+# Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#-----------------------------------------------------------------------
+#
+
+SCRIPT_NAME=$(basename $0)
+SCRIPT_VER=0.1
+FSTYPE=overlay
+SCRIPT_DESC="$FSTYPE snapshot management script"
+
+version()
+{
+	echo "$SCRIPT_NAME v$SCRIPT_VER ($SCRIPT_DESC)"
+}
+
+usage()
+{
+	version
+	echo "usage: $SCRIPT_NAME help [cmd]"
+	echo "usage: $SCRIPT_NAME version"
+	echo
+	echo "$FSTYPE snapshot commands:"
+	echo "usage: $SCRIPT_NAME {create|take}  <path>[[/]@[/]<snapshot-name>] (default-name=<GMT-date>)"
+	echo "usage: $SCRIPT_NAME {mount|umount} <path>[[/]@[/]<snapshot-name>]"
+	echo "usage: $SCRIPT_NAME {delete|remove} <path>[/]@[/]<snapshot-name>"
+	echo
+	echo "snapshot command parameter may be given in ZFS style <path>@<snapshot-name>"
+        echo "and it may be given as the snapshot directory path <path>/@/<snapshot-name>."
+	echo "If <snapshot-name> part is omitted, command may apply to all snapshots (e.g. umount)."
+	echo
+	echo "$FSTYPE test commands:"
+	echo "usage: $SCRIPT_NAME {test|tests} [test-number] [delay-sec] [file-size-mb]"
+	echo
+	exit 1
+}
+
+error()
+{
+	echo "$SCRIPT_NAME: $1" >&2
+	exit 1
+}
+
+if [ $# -ge 2 ] && [ $1 != help ] && [ $1_$2 != $1_help ] && \
+	[ $1 != version ] && [ _$1 != _test ] && [ $1 != tests ] ; then
+	# parse <path>[[/]@[/]<snapshot-name>] argument
+	MNT=$( echo $2 | ( IFS=$IFS@ ; read a b ; echo $a ) )
+	s=$( echo $2 | ( IFS=$IFS@ ; read a b ; echo $b ) )
+	# strip / from <path>/ and /<snapshot-name>
+	MNT="${MNT%/}"
+	s="${s#/}"
+fi
+
+
+if [ ! -z $1 ] && [ $1 != help ] && [ $1_$2 != $1_help ] && \
+	[ $1 != version ] && [ _$1 != _test ] && [ $1 != tests ] ; then
+	[ -n $MNT ] || usage
+	[ -d $MNT ] || error "'$MNT' is not a directory."
+	export MNT
+	S=$MNT@$s
+fi
+
+# directory inside <path> to store snapshot related files
+SNAPDIR=$MNT/@
+# directory prefix for snapshot mount points
+# snaphot mount points will be created as $SNAPMNT<snapshot-name>
+SNAPMNT=$MNT/@/
+# file to store snapshots stack
+SNAPSHOTS="$SNAPDIR/.snapshots"
+
+create_snapshot()
+{
+	local s=$1
+
+	mkdir -p $SNAPDIR/$s/u || exit 1
+	mkdir -p $SNAPDIR/$s/w || exit 1
+	mknod $SNAPDIR/$s/u/@ c 0 0 || exit 1
+	echo $s >> $SNAPSHOTS || exit 1
+	sync
+}
+
+snapshot_is_mounted()
+{
+	grep -q "^\S\+ $MNT snapshot" /proc/mounts
+}
+
+mount_snapshot()
+{
+	! snapshot_is_mounted || return
+	mount -t snapshot snapshot $MNT || exit 1
+}
+
+umount_snapshot()
+{
+	snapshot_is_mounted || return
+	umount $MNT || exit 1
+}
+
+TESTDIR=test
+
+# See how we were called.
+case "$1" in
+# Snapshot global commands
+  help)
+	if [ -z $2 ] ; then
+		usage
+	else
+		$0 $2 help
+	fi
+	;;
+  version)
+	if [ $1_$2 = $1_help ] ; then
+		echo "$1: display $SCRIPT_NAME version."
+		exit 0
+	fi
+	version
+	;;
+
+  stat)
+	if [ $1_$2 = $1_help ] ; then
+		echo "stat: display status of $FSTYPE filesystem and all its snapshots."
+		echo "snapshot attributes are displayed in short format. to display"
+		echo "attributes in long format use the '$0 lsattr' command."
+		echo "usage: $SCRIPT_NAME stat [$FSTYPE-mount]"
+		exit 0
+	fi
+	echo "Mounted $FSTYPE filesystem and snapshots:"
+	df -h $MNT $SNAPMNT* 2> /dev/null
+	echo .
+	echo "Snapshots list:"
+	echo "id inode attributes disk-usage mtime filename"
+	echo "---------------------------------------------"
+	for s in $( ls -vr $SNAPDIR/* ) ; do
+		( echo "$( $LSSNAP -v $s ) " ; \
+			echo "$( du -h $s ) " ; \
+			echo "$( ls -lih --color=never $s ) " ) | \
+		( read id attr a ; read du b ; read ino c d e f g mm dd tt fname h ; \
+			echo $id $ino $attr $du $mm $dd $tt $fname )
+	done 2> /dev/null
+	echo .
+	;;
+
+# Snapshot control commands (single snapshot)
+  create|take)
+	if [ $1_$2 = $1_help ] ; then
+		echo "$1: create a new snapshot."
+		echo "usage: $SCRIPT_NAME {create|take} <path>[[/]@[/]<snapshot-name>] (default-name=<GMT-date>)"
+		exit 0
+	fi
+	if [ -z $s ] ; then
+		# default snapshot-name is the <date-time> in shadow copy format
+		s=$( date -u +GMT-%Y.%m.%d-%H.%M.%S )
+		S=$MNT@$s
+	fi
+	if [ -d $SNAPDIR/$s ] ; then
+		error "$1: snapshot $S already exists!"
+	fi
+
+	# For now new snapshot requires umount/mount of all snapshots
+	umount_snapshot
+	create_snapshot $s
+	mount_snapshot
+	echo snapshot $S was created
+	echo .
+	;;
+  delete)
+	if [ $1_$2 = $1_help ] ; then
+		echo "delete: umount a snapshot and mark it for deletion."
+		echo "any non-mounted snapshot can be marked for deletion"
+		echo "but some snapshot deletion is deferred to later time."
+		echo "usage: $SCRIPT_NAME delete [$FSTYPE-mount@]<snapshot-name>"
+		exit 0
+	fi
+	if [ -z $s ] ; then
+		$0
+		exit 1
+	fi
+	if [ -f $SNAPDIR/$s ] ; then
+		$0 umount $s
+		$CHSNAP -S $SNAPDIR/$s || exit 1
+	fi
+	echo snapshot $S is deleted
+	echo .
+	;;
+  remove)
+	if [ $1_$2 = $1_help ] ; then
+		echo "remove: delete a snapshot permanently."
+		echo "this command will fail for active snapshot and snapshots"
+		echo "in use by older snapshots. try using the delete command."
+		echo "usage: $SCRIPT_NAME remove [$FSTYPE-mount@]<snapshot-name>"
+		exit 0
+	fi
+	if [ -z $2 ] ; then
+		$0
+		exit 1
+	fi
+	if [ -f $SNAPDIR/$s ] ; then
+		$0 delete $s
+		rm -f $SNAPDIR/$s 2> /dev/null || exit 1
+	fi
+	echo snapshot $S was removed
+	echo .
+	;;
+
+# Snapshot control commands (single or all snapshots)
+  mount)
+	if [ $1_$2 = $1_help ] ; then
+		echo "mount: mount all snapshots."
+		echo "usage: $SCRIPT_NAME mount <path>"
+		exit 0
+	fi
+
+	if snapshot_is_mounted; then
+		error "mount: snapshot $S is already mounted!"
+	fi
+	mount_snapshot
+	echo snapshot $S is mounted
+	echo .
+	;;
+  umount)
+	if [ $1_$2 = $1_help ] ; then
+		echo "umount: umount all snapshots."
+		echo "usage: $SCRIPT_NAME umount <path>"
+		exit 0
+	fi
+	if ! snapshot_is_mounted; then
+		error "mount: snapshot $S is not mounted!"
+	fi
+	umount_snapshot
+	echo snapshot $S was unmounted
+	echo .
+	;;
+
+# Snapshot sanity tests
+  mktest)
+	if [ -d $MNT/A ] ; then
+		exit 0
+	fi
+	mkdir $MNT/A
+	mkdir $MNT/B
+	mkdir $MNT/C
+	mkdir $MNT/D
+	mkdir $MNT/E
+	echo aligator > $MNT/A/a.txt
+	echo bizon > $MNT/B/b.txt
+	echo camel > $MNT/C/c.txt
+	# create non-snapshot dir in snapshots dir block group
+	mkdir -p $MNT/$TESTDIR
+	$CHATTR -x $MNT/$TESTDIR || exit 1
+	;;
+  rmtest)
+	rm -rf $MNT/? 2> /dev/null
+	rm -rf $MNT/$TESTDIR 2> /dev/null
+	;;
+  lstest)
+	if [ $1_$2 = $1_help ] ; then
+		echo "lstest: list the content of test files in a snapshot or $FSTYPE filesystem."
+		echo "usage: $SCRIPT_NAME lstest [[$FSTYPE-mount@]snapshot-name] (default=$FSTYPE-mount)"
+		exit 0
+	fi
+	if [ -z $s ] ; then
+		echo Files in file system:
+		d=$MNT
+	else
+		$0 mount $s || exit 1
+		echo Files in snapshot $s:
+		d=$SNAPMNT$s
+	fi
+	if [ -d $d ] ; then
+		cd $d > /dev/null
+		grep -v xxx ?/*
+		test -e $TESTDIR/md5list && (cd $TESTDIR ; md5sum -c md5list || exit 1)
+		#find $d/ -maxdepth 1 -type f -print
+		cd - > /dev/null
+		echo .
+	fi
+	if [ ! -z $s ] ; then
+		$0 umount $s || exit 1
+	fi
+	;;
+  tests)
+	if [ $1_$2 = $1_help ] ; then
+		echo "tests: run snapshot sanity tests 1..N."
+		echo "usage: $SCRIPT_NAME tests [test-number] [delay-sec] [file-size-mb]"
+		echo "delay-sec: sleep between tests"
+		echo "file-size-mb: test file size in mega bytes (default = 1)"
+		exit 0
+	fi
+	if [ -z $2 ] ; then
+		N=4
+	else
+		N=$2
+	fi
+	# disable read-ahead if test read is enabled
+	test $test_read = 0 || blockdev --setra 0 $ROOTDEV
+	for s in $( ls $SNAPDIR/ 2> /dev/null ) ; do
+		$0 delete $s 2> /dev/null
+	done
+	for s in $( ls $SNAPDIR/ 2> /dev/null ) ; do
+		$0 remove $s 2> /dev/null
+	done
+	for n in $( seq 0 $N ) ; do
+		$0 test $n $3 $4 || exit 1
+	done
+	$0 lstest
+	for n in $( seq 1 $N ) ; do
+		$0 lstest $n
+	done
+	# skip fsck if non zero read delay or zero delay between tests         
+        ( [ ${test_read}_ms = 0_ms ] && [ ${3}_ms != 0_ms ] ) || exit 0
+	sleep 1
+	if [ $N = 0 ] ; then
+		$0 umount $MNT || exit 1
+		$0 fsck $ROOTDEV
+		$0 mount $ROOTDEV $MNT || exit 1
+	else
+		for n in $( seq 1 $N ) ; do
+			$0 fsck $n 2> /dev/null
+		done
+	fi
+	;;
+  test)
+	if [ $1_$2 = $1_help ] ; then
+		echo "test: run snapshot sanity test N."
+		echo "usage: $SCRIPT_NAME test [test-number] [delay-sec] [file-size-mb]"
+		echo "delay-sec: sleep before test"
+		echo "file-size-mb: test file size in mega bytes (default = 1)"
+		exit 0
+	fi
+	if [ -z $2 ] ; then
+		n=1
+	else
+		n=$2
+	fi
+	if [ $n = 0 ] ; then
+		$0 rmtest
+		exit 0
+	fi
+	$0 mktest
+	echo
+	echo Running snapshot test $n:
+	echo ------------------------
+	if [ ! -z $3 ] ; then
+		sleep $3 # delay between tests
+	fi
+	if [ ! -z $4 ] ; then
+		M=$4
+	else
+		M=1
+	fi
+	F=${M}M
+	cd $MNT/$TESTDIR > /dev/null
+	NOTRUNC="conv=notrunc"
+	# uncomment the following line to run in-place write tests
+	INPLACE=$NOTRUNC
+	# uncomment the following line to run direct I/O write tests
+	DIRECT="oflag=direct"
+	TRUNCSIZE=4
+	echo Appending $F zeros to $F.1 $DIRECT
+	# append writes to new allocated blocks
+	dd if=/dev/zero bs=1M count=$M of=$F.1 $NOTRUNC oflag=append $DIRECT status=noxfer || exit 1
+	echo Writing $F random data to $n files
+	for i in $( seq 1 $n ) ; do
+		# 1st rewrite moves existing blocks to snapshot and allocates new blocks
+		dd if=/dev/urandom bs=1M count=$M of=$F.$i $INPLACE status=noxfer || exit 1
+		# subsequent rewrites doesn't move blocks to snapshot
+		dd if=/dev/urandom bs=1M count=$M of=$F.1 $INPLACE $DIRECT status=noxfer || exit 1
+	done
+	for i in $( seq 1 $n ) ; do
+		md5sum $F.$i || exit 1
+	done > md5list
+	cd - > /dev/null
+	$0 lstest || exit 1
+	s=$n
+	$0 take $s || exit 1
+	case "$n" in
+  	  1)
+		echo Create test:
+		echo ------------
+		echo 'Creating d.txt'
+		echo dodo > $MNT/D/d.txt
+		echo 'Creating e.txt'
+		echo emu > $MNT/E/e.txt
+	  ;;
+	  2)
+		echo Write test:
+		echo -----------
+		echo 'Writing b.txt (append)'
+		echo 'barracuda' >> $MNT/B/b.txt
+		echo 'Writing c.txt (truncate)'
+		echo 'crocodile' > $MNT/C/c.txt
+	  ;;
+	  3)
+		echo Remove test:
+		echo ------------
+		echo "Truncating c.txt (to size $TRUNCSIZE)"
+		truncate -s $TRUNCSIZE $MNT/C/c.txt
+		echo 'Removing d.txt'
+		rm $MNT/D/d.txt
+	  ;;
+	  4)
+		echo Restore test:
+		echo -------------
+		f=$( ls -v $SNAPDIR/ | head -n 1 )
+		echo 'Restoring from snapshot' $f
+		if ! grep $SNAPMNT$f /proc/mounts ; then
+			$0 mount $f || exit 1
+		fi
+		rm -rf $MNT/?
+		cp -R $SNAPMNT$f/? $MNT/
+		$0 umount $f || exit 1
+	  ;;
+	  5)
+		echo Delete excluded test:
+		echo ---------------------
+	  	#echo Removing excluded files
+	  	#rm $MNT/*M
+	  ;;
+	  6)
+		echo Delete reallocated test:
+		echo ------------------------
+		#echo Removing /$F
+		#rm $MNT/$F
+	  ;;
+	  7)
+		echo Shrink snapshots test:
+		echo ---------------------
+		$0 mount 1
+		for f in 5 6 4 3 2 ; do
+			echo 'Deleting snapshot' $f
+			$0 delete $f 2> /dev/null
+			$0 stat
+		done
+	  ;;
+	  8)
+		echo Merge snapshots test:
+		echo ---------------------
+		$0 umount 1
+		for f in 7 ; do
+			echo 'Deleting snapshot' $f
+			$0 delete $f 2> /dev/null
+			$0 stat
+		done
+	  ;;
+	esac || exit 1
+	echo .
+	$0 lstest || exit 1
+	$0 lstest $s || exit 1
+	$0 stat
+	;;
+
+  *)
+	usage
+esac
+
+exit 0
