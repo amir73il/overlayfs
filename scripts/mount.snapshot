@@ -37,6 +37,12 @@ shift
 
 [ -d "$mnt" ] || exit 1
 
+error()
+{
+	echo "$1" >&2
+	exit 1
+}
+
 # No support for mount options at the moment
 if [ -n "$*" -a "$*" != "-o rw" ]; then
 	echo "$*" > /tmp/mount.snapshot.in
@@ -46,12 +52,18 @@ fi
 
 # Verify that overlayfs snapshot feature is enabled
 grep -wq 'overlay' /proc/filesystems || modprobe overlay
-grep -wq 'snapshot' /proc/filesystems || exit 1
+grep -wq 'snapshot' /proc/filesystems || \
+	error "overlayfs snapshots feature not enabled."
 
-# TODO: verify snapshot $id is not already mounted
+# Verify snapshot is not already mounted - nesting is not allowed
+! grep -q "^\S\+ $mnt snapshot" /proc/mounts || \
+	error "overlayfs snapshot already mounted at $mnt."
 
 lower="$mnt"
 snapdir="$mnt/@"
+
+# If we create snapdir, we should remove it on failure
+[ -d "$snapdir" ] || cleanup_snapdir=true
 
 cd "$lower" || exit 1
 
@@ -60,6 +72,9 @@ base="@/$id"
 upper="$base/u"
 work="$base/w"
 snap="$base"
+
+# If we create a new snapshot, we should remove it on failure
+[ -d "$snap" ] || new_snap=true
 
 tmpdir=/tmp/snapshot.$$
 tmpsnap="$tmpdir/$id"
@@ -71,7 +86,12 @@ _cleanup()
 	umount -i "$tmpsnap" 2>/dev/null
 	umount -i "$tmpdir" 2>/dev/null
 	umount -i "$snapdir" 2>/dev/null
-	rmdir $tmpdir
+	rmdir $tmpdir 2>/dev/null
+	if [ $err != 0 ]; then
+		# Cleanup new created directories on failure
+		[ -z "$new_snap" ] || rm -rf "$mnt/$snap"
+		[ -z "$cleanup_snapdir" ] || rm -rf "$snapdir"
+	fi
 	exit $err
 }
 
