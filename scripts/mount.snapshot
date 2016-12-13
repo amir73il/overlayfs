@@ -94,7 +94,7 @@ mount -i -t snapshot "snapshot@$id" -o"upperdir=$lower,snapshot=$snap" \
 	"$mnt" || exit 1
 
 # Write new snapshot id to snapshots stack
-snapshots="$snapdir/snapshots"
+snapshots="$snapdir/.snapshots"
 grep -qs "^$id$" "$snapshots" || echo "$id" >> "$snapshots"
 
 # Bind the (now covered) snapshot overlay above the snapshot mount

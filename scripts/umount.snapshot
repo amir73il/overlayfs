@@ -30,21 +30,26 @@ mnt="${1%/}"
 
 [ -d "$mnt" ] || exit 1
 
-snapdir="$mnt/@"
-snapshots="$snapdir/snapshots"
 
-# TODO: verify snapshot $id is mounted
+snapdir="$mnt/@"
+snapshots="$snapdir/.snapshots"
 
 umount_snapshots()
 {
-	[ -s "$snapshots" ] || return
-	cat "$snapshots" | while read id; do
+	# Unmount snapshot overlays recorded in snapshots stack
+	[ ! -s "$snapshots" ] || cat "$snapshots" | while read id; do
 		umount -i "$snapdir/$id" 2>/dev/null
 	done
+
+	# Cleanup leftover snapshot overlays not recorded in snapshots stack
+	if grep -q "^snapshot@\S\+ $snapdir/\S\+ overlay" /proc/mounts; then
+		umount -i "$snapdir"/* 2>/dev/null
+	fi
 }
 
 umount_snapshots
 umount -i "$mnt"
 # Repeat in case mount.snapshot cleanup failed
 umount_snapshots
+# Unmount the shared snapshots dir
 umount -i "$snapdir"
