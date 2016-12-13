@@ -1,11 +1,12 @@
 #!/bin/sh
-# mount.snapshot <id> <mnt>
+# mount.snapshot <dev> <mnt>
 #
 # Overlayfs snapshot mount helper
 #
-# - Create a new snapshot overlay at <mnt>/@/<id>
+# - Create snapshot dir <mnt>/@ and snapshot 0 if non exists
+# - Bind shared mount at <mnt>/@
 # - Mount snapshot mount at <mnt>
-# - Append snapshot <id> to <mnt>/@/snapshots
+# - Mount olds snapshots at <mnt>/@/<id>..
 #
 # * If any mount flags other than -o rw are passed to helper,
 #   it passes the command as is without doing the above
@@ -30,7 +31,7 @@
 #-----------------------------------------------------------------------
 #
 
-id="$1"
+dev="$1"
 shift
 mnt="${1%/}"
 shift
@@ -46,7 +47,7 @@ error()
 # No support for mount options at the moment
 if [ -n "$*" -a "$*" != "-o rw" ]; then
 	echo "$*" > /tmp/mount.snapshot.in
-	mount -i -t snapshot "$id" "$mnt" $*
+	mount -i -t snapshot "$dev" "$mnt" $*
 	exit $?
 fi
 
@@ -65,6 +66,9 @@ snapshots="$snapdir/.snapshots"
 
 # If we create snapdir, we should remove it on failure
 [ -d "$snapdir" ] || cleanup_snapdir=true
+
+id=0
+[ ! -s "$snapshots" ] || id=$(tail -n 1 "$snapshots")
 
 cd "$lower" || exit 1
 
@@ -104,7 +108,7 @@ mount_old_snapshots()
 	tac "$snapshots" | while read old; do
 		[ "$old" != "$id" ] || continue
 		old_snapshots="@/$old/u:$old_snapshots"
-		mount -i -t overlay "snapshot@$old" "@/$old" \
+		mount -i -t overlay "$dev@$old" "@/$old" \
 			-o"ro,lowerdir=$old_snapshots"
 	done
 }
@@ -122,9 +126,9 @@ mkdir -p "$tmpdir"
 mount --bind "$snapdir" "$tmpdir"
 
 # Mount the snapshot overlay and snapshot mount
-mount -i -t overlay "snapshot@$id" -o"lowerdir=$lower,upperdir=$upper,workdir=$work" \
+mount -i -t overlay "$dev@$id" -o"lowerdir=$lower,upperdir=$upper,workdir=$work" \
 	"$snap" || exit 1
-mount -i -t snapshot "snapshot@$id" -o"upperdir=$lower,snapshot=$snap" \
+mount -i -t snapshot "$dev@$id" -o"upperdir=$lower,snapshot=$snap" \
 	"$mnt" || exit 1
 
 # Write new snapshot id to snapshots stack
