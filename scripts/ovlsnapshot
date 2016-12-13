@@ -39,7 +39,7 @@ usage()
 	echo "usage: $SCRIPT_NAME version"
 	echo
 	echo "$FSTYPE snapshot commands:"
-	echo "usage: $SCRIPT_NAME {create|take}  <path>[[/]@[/]<snapshot-name>] (default-name=<GMT-date>)"
+	echo "usage: $SCRIPT_NAME {create|take}  <path>[[/]@[/]<snapshot-name>] (default-name=<date.time>)"
 	echo "usage: $SCRIPT_NAME {mount|umount} <path>[[/]@[/]<snapshot-name>]"
 	echo "usage: $SCRIPT_NAME {delete|remove} <path>[/]@[/]<snapshot-name>"
 	echo
@@ -59,32 +59,11 @@ error()
 	exit 1
 }
 
-if [ $# -ge 2 ] && [ $1 != help ] && [ $1_$2 != $1_help ] && \
-	[ $1 != version ] && [ _$1 != _test ] && [ $1 != tests ] ; then
-	# parse <path>[[/]@[/]<snapshot-name>] argument
-	MNT=$( echo $2 | ( IFS=$IFS@ ; read a b ; echo $a ) )
-	s=$( echo $2 | ( IFS=$IFS@ ; read a b ; echo $b ) )
-	# strip / from <path>/ and /<snapshot-name>
-	MNT="${MNT%/}"
-	s="${s#/}"
-fi
-
-
-if [ ! -z $1 ] && [ $1 != help ] && [ $1_$2 != $1_help ] && \
-	[ $1 != version ] && [ _$1 != _test ] && [ $1 != tests ] ; then
-	[ -n $MNT ] || usage
-	[ -d $MNT ] || error "'$MNT' is not a directory."
-	export MNT
-	S=$MNT@$s
-fi
-
-# directory inside <path> to store snapshot related files
-SNAPDIR=$MNT/@
-# directory prefix for snapshot mount points
-# snaphot mount points will be created as $SNAPMNT<snapshot-name>
-SNAPMNT=$MNT/@/
-# file to store snapshots stack
-SNAPSHOTS="$SNAPDIR/.snapshots"
+current_snapshot()
+{
+	[ -s $SNAPSHOTS ] || return
+	tail -n 1 $SNAPSHOTS
+}
 
 create_snapshot()
 {
@@ -113,6 +92,32 @@ umount_snapshot()
 	snapshot_is_mounted || return
 	umount $MNT || exit 1
 }
+
+if [ $# -ge 2 ] && [ $1 != help ] && [ $1_$2 != $1_help ] && \
+	[ $1 != version ] && [ _$1 != _test ] && [ $1 != tests ] ; then
+	# parse <path>[[/]@[/]<snapshot-name>] argument
+	MNT=$( echo $2 | ( IFS=$IFS@ ; read a b ; echo $a ) )
+	snap=$( echo $2 | ( IFS=$IFS@ ; read a b ; echo $b ) )
+	# strip / from <path>/ and /<snapshot-name>
+	MNT=${MNT%/}
+	snap=${snap#/}
+	# directory inside <path> to store snapshot related files
+	SNAPDIR=$MNT/@
+	# directory prefix for snapshot mount points
+	# snaphot mount points will be created as $SNAPMNT<snapshot-name>
+	SNAPMNT=$MNT/@/
+	# file to store snapshots stack
+	SNAPSHOTS="$SNAPDIR/.snapshots"
+fi
+
+
+if [ ! -z $1 ] && [ $1 != help ] && [ $1_$2 != $1_help ] && \
+	[ $1 != version ] && [ _$1 != _test ] && [ $1 != tests ] ; then
+	[ -n $MNT ] || usage
+	[ -d $MNT ] || error "'$MNT' is not a directory."
+	export MNT
+	S=$MNT@$snap
+fi
 
 TESTDIR=test
 
@@ -162,12 +167,12 @@ case "$1" in
   create|take)
 	if [ $1_$2 = $1_help ] ; then
 		echo "$1: create a new snapshot."
-		echo "usage: $SCRIPT_NAME {create|take} <path>[[/]@[/]<snapshot-name>] (default-name=<GMT-date>)"
+		echo "usage: $SCRIPT_NAME {create|take} <path>[[/]@[/]<snapshot-name>] (default-name=<date.time>)"
 		exit 0
 	fi
 	if [ -z $s ] ; then
-		# default snapshot-name is the <date-time> in shadow copy format
-		s=$( date -u +GMT-%Y.%m.%d-%H.%M.%S )
+		# default snapshot-name is <date.time>
+		s=$( date -u +%y%m%d.%H%M%S )
 		S=$MNT@$s
 	fi
 	if [ -d $SNAPDIR/$s ] ; then
@@ -186,13 +191,10 @@ case "$1" in
 		echo "delete: umount a snapshot and mark it for deletion."
 		echo "any non-mounted snapshot can be marked for deletion"
 		echo "but some snapshot deletion is deferred to later time."
-		echo "usage: $SCRIPT_NAME delete [$FSTYPE-mount@]<snapshot-name>"
+		echo "usage: $SCRIPT_NAME delete <path>[/]@[/]<snapshot-name>"
 		exit 0
 	fi
-	if [ -z $s ] ; then
-		$0
-		exit 1
-	fi
+	[ -n "$s" ] || usage
 	if [ -f $SNAPDIR/$s ] ; then
 		$0 umount $s
 		$CHSNAP -S $SNAPDIR/$s || exit 1
@@ -205,13 +207,10 @@ case "$1" in
 		echo "remove: delete a snapshot permanently."
 		echo "this command will fail for active snapshot and snapshots"
 		echo "in use by older snapshots. try using the delete command."
-		echo "usage: $SCRIPT_NAME remove [$FSTYPE-mount@]<snapshot-name>"
+		echo "usage: $SCRIPT_NAME remove <path>[/]@[/]<snapshot-name>"
 		exit 0
 	fi
-	if [ -z $2 ] ; then
-		$0
-		exit 1
-	fi
+	[ -n "$s" ] || usage
 	if [ -f $SNAPDIR/$s ] ; then
 		$0 delete $s
 		rm -f $SNAPDIR/$s 2> /dev/null || exit 1
@@ -227,7 +226,7 @@ case "$1" in
 		echo "usage: $SCRIPT_NAME mount <path>"
 		exit 0
 	fi
-
+	S=$MNT@$(current_snapshot)
 	if snapshot_is_mounted; then
 		error "mount: snapshot $S is already mounted!"
 	fi
@@ -241,6 +240,7 @@ case "$1" in
 		echo "usage: $SCRIPT_NAME umount <path>"
 		exit 0
 	fi
+	S=$MNT@$(current_snapshot)
 	if ! snapshot_is_mounted; then
 		error "mount: snapshot $S is not mounted!"
 	fi
