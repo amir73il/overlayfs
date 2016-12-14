@@ -78,8 +78,8 @@ parse_path_snapshot_arg()
 	# file to store snapshots stack
 	SNAPSHOTS="$SNAPDIR/.snapshots"
 
-	# <path> arg is optional for list command
-	if [ "$CMD" = list ] && [ -z "$MNT" -o "$MNT" = "-a" ]; then
+	# list and umount commands can take -a instead of <path> argument
+	if [ "$CMD" = list -o "$CMD" = umount ] && [ "$MNT" = "-a" ]; then
 		return
 	fi
 	[ -n "$MNT" ] || usage
@@ -189,6 +189,13 @@ umount_snapshot()
 	umount $MNT || exit 1
 }
 
+umount_all_mounted_snapshots()
+{
+	mount -t snapshot | ( while read dev on path opt; do
+		$0 umount "$path"
+	done )
+}
+
 list_snapshots()
 {
 	echo "Snapshots list at '$MNT':"
@@ -238,11 +245,11 @@ snapshot_status()
 	fi
 
 	# List snapshot overlays of snapshot mount
+	S=$MNT@$(current_snapshot)
 	if snapshot_is_mounted ; then
-		echo "$FSTYPE snapshot at '$MNT' is mounted:"
-		list_snapshot_mounts $MNT
+		echo "$FSTYPE snapshot $S is mounted."
 	else
-		echo "$FSTYPE snapshot at '$MNT' is not mounted."
+		echo "$FSTYPE snapshot $S is not mounted."
 	fi
 }
 
@@ -279,20 +286,22 @@ case "$CMD" in
 	if [ "$2" = help ]; then
 		echo "list: display list and status of $FSTYPE snapshots."
 		echo "usage: $SCRIPT_NAME list [<path>|-a]"
-		exit 0
-	fi
-	if [ -z "$MNT" ]; then
-		# List all snapshot mounts
-		echo "$FSTYPE snapshot mounts:"
-		list_snapshot_mounts
 		echo
 		echo "run '$SCRIPT_NAME list <path>' to list $FSTYPE snapshots at <path>"
 		echo "run '$SCRIPT_NAME list -a' to list all mounted $FSTYPE snapshots"
-	elif [ "$MNT" = "-a" ]; then
+		exit 0
+	fi
+	if [ "$MNT" = "-a" ]; then
+		# List all snapshot mounts
+		echo "$FSTYPE snapshot mounts:"
+		echo "------------------------"
+		list_snapshot_mounts
+		echo .
 		# List all snapshots overlays of all snapshot mounts
 		list_all_mounted_snapshots
 		exit 0
 	elif snapshot_status ; then
+		echo .
 		list_snapshots
 	fi
 	echo .
@@ -317,7 +326,7 @@ case "$CMD" in
 	umount_snapshot
 	create_snapshot $snap
 	mount_snapshot
-	echo snapshot $S was created
+	echo "snapshot $S was created"
 	echo .
 	;;
   delete)
@@ -340,7 +349,7 @@ case "$CMD" in
 	fi
 
 	delete_snapshot $snap
-	echo snapshot $S is deleted
+	echo "snapshot $S was deleted"
 	echo .
 	;;
   remove)
@@ -363,7 +372,7 @@ case "$CMD" in
 	fi
 
 	remove_snapshot $snap
-	echo snapshot $S was removed
+	echo "snapshot $S was removed"
 	echo .
 	;;
 
@@ -378,7 +387,7 @@ case "$CMD" in
 		error "snapshot $S is already mounted!"
 	fi
 	mount_snapshot
-	echo snapshot $S is mounted
+	echo "snapshot $S was mounted"
 	echo .
 	;;
   umount)
@@ -387,12 +396,17 @@ case "$CMD" in
 		echo "usage: $SCRIPT_NAME umount <path>"
 		exit 0
 	fi
+	if [ "$MNT" = "-a" ]; then
+		# Unmount all snapshot mounts
+		umount_all_mounted_snapshots
+		exit 0
+	fi
 	S=$MNT@$(current_snapshot)
 	if ! snapshot_is_mounted; then
 		error "snapshot $S is not mounted!"
 	fi
 	umount_snapshot
-	echo snapshot $S was unmounted
+	echo "snapshot $S was unmounted"
 	echo .
 	;;
 
