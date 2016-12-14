@@ -27,7 +27,6 @@ SCRIPT_VER=0.1
 FSTYPE=overlay
 SCRIPT_DESC="$FSTYPE snapshot management script"
 CMD="$1"
-TESTDIR=test
 
 version()
 {
@@ -51,7 +50,7 @@ usage()
 	echo "If <snapshot-name> part is omitted, command may apply to all snapshots (e.g. umount)."
 	echo
 	echo "$FSTYPE snapshot test commands:"
-	echo "usage: $SCRIPT_NAME {test|tests} <path> [test-number] [delay-sec] [file-size-mb]"
+	echo "usage: $SCRIPT_NAME {test|tests} <path> [test-number] [file-size-mb]"
 	echo
 	exit 1
 }
@@ -86,6 +85,8 @@ parse_path_snapshot_arg()
 	[ -d "$MNT" ] || error "'$MNT' is not a directory!"
 	export MNT
 	S=$MNT@$snap
+	SNAPTEST="ovlsnaptest"
+	TESTDIR="$MNT/$SNAPTEST"
 }
 
 current_snapshot()
@@ -244,7 +245,6 @@ snapshot_status()
 		return 1
 	fi
 
-	# List snapshot overlays of snapshot mount
 	S=$MNT@$(current_snapshot)
 	if snapshot_is_mounted ; then
 		echo "$FSTYPE snapshot $S is mounted."
@@ -412,123 +412,81 @@ case "$CMD" in
 
 # Snapshot sanity tests
   mktest)
-	if [ -d $MNT/A ] ; then
+	if [ -d $TESTDIR/A ] ; then
 		exit 0
 	fi
-	mkdir $MNT/A
-	mkdir $MNT/B
-	mkdir $MNT/C
-	mkdir $MNT/D
-	mkdir $MNT/E
-	echo aligator > $MNT/A/a.txt
-	echo bizon > $MNT/B/b.txt
-	echo camel > $MNT/C/c.txt
-	# create non-snapshot dir in snapshots dir block group
-	mkdir -p $MNT/$TESTDIR
-	$CHATTR -x $MNT/$TESTDIR || exit 1
+	mkdir -p $TESTDIR
+	mkdir $TESTDIR/A
+	mkdir $TESTDIR/B
+	mkdir $TESTDIR/C
+	mkdir $TESTDIR/D
+	mkdir $TESTDIR/E
+	echo aligator > $TESTDIR/A/a.txt
+	echo bizon > $TESTDIR/B/b.txt
+	echo camel > $TESTDIR/C/c.txt
 	;;
   rmtest)
-	rm -rf $MNT/? 2> /dev/null
-	rm -rf $MNT/$TESTDIR 2> /dev/null
+	rm -rf $TESTDIR 2> /dev/null
 	;;
   lstest)
-	if [ $1_$2 = $1_help ] ; then
-		echo "lstest: list the content of test files in a snapshot or $FSTYPE filesystem."
-		echo "usage: $SCRIPT_NAME lstest [[$FSTYPE-mount@]snapshot-name] (default=$FSTYPE-mount)"
-		exit 0
-	fi
-	if [ -z $s ] ; then
-		echo Files in file system:
-		d=$MNT
+	if [ -z "$snap" ] ; then
+		echo Files in snapshot mount:
+		d=$TESTDIR
 	else
-		$0 mount $s || exit 1
-		echo Files in snapshot $s:
-		d=$SNAPMNT$s
+		echo "Files in snapshot $snap:"
+		d=$SNAPMNT$snap/$SNAPTEST
 	fi
 	if [ -d $d ] ; then
 		cd $d > /dev/null
-		grep -v xxx ?/*
-		test -e $TESTDIR/md5list && (cd $TESTDIR ; md5sum -c md5list || exit 1)
-		#find $d/ -maxdepth 1 -type f -print
+		grep -v xxx ?/* 2>/dev/null
+		[ -s md5list ] && (md5sum -c md5list || exit 1)
 		cd - > /dev/null
 		echo .
 	fi
-	if [ ! -z $s ] ; then
-		$0 umount $s || exit 1
-	fi
 	;;
   tests)
-	if [ $1_$2 = $1_help ] ; then
+	if [ "$2" = help ]; then
 		echo "tests: run snapshot sanity tests 1..N."
-		echo "usage: $SCRIPT_NAME tests [test-number] [delay-sec] [file-size-mb]"
-		echo "delay-sec: sleep between tests"
+		echo "usage: $SCRIPT_NAME tests <path> [test-number] [file-size-mb]"
 		echo "file-size-mb: test file size in mega bytes (default = 1)"
 		exit 0
 	fi
-	if [ -z $2 ] ; then
-		N=4
-	else
-		N=$2
-	fi
-	# disable read-ahead if test read is enabled
-	test $test_read = 0 || blockdev --setra 0 $ROOTDEV
-	for s in $( ls $SNAPDIR/ 2> /dev/null ) ; do
-		$0 delete $s 2> /dev/null
+	N=4
+	[ -z "$3" ] || N=$3
+	$0 umount $MNT
+	for s in $( cat $SNAPSHOTS 2> /dev/null ) ; do
+		$0 remove $SNAPMNT$s 2> /dev/null
 	done
-	for s in $( ls $SNAPDIR/ 2> /dev/null ) ; do
-		$0 remove $s 2> /dev/null
-	done
+	$0 mount $MNT
 	for n in $( seq 0 $N ) ; do
-		$0 test $n $3 $4 || exit 1
+		$0 test $MNT $n $4 || exit 1
 	done
-	$0 lstest
+	$0 lstest $MNT
 	for n in $( seq 1 $N ) ; do
-		$0 lstest $n
+		$0 lstest $SNAPMNT$n
 	done
-	# skip fsck if non zero read delay or zero delay between tests         
-        ( [ ${test_read}_ms = 0_ms ] && [ ${3}_ms != 0_ms ] ) || exit 0
-	sleep 1
-	if [ $N = 0 ] ; then
-		$0 umount $MNT || exit 1
-		$0 fsck $ROOTDEV
-		$0 mount $ROOTDEV $MNT || exit 1
-	else
-		for n in $( seq 1 $N ) ; do
-			$0 fsck $n 2> /dev/null
-		done
-	fi
 	;;
   test)
-	if [ $1_$2 = $1_help ] ; then
+	if [ "$2" = help ]; then
 		echo "test: run snapshot sanity test N."
-		echo "usage: $SCRIPT_NAME test [test-number] [delay-sec] [file-size-mb]"
-		echo "delay-sec: sleep before test"
+		echo "usage: $SCRIPT_NAME test <path> [test-number] [file-size-mb]"
 		echo "file-size-mb: test file size in mega bytes (default = 1)"
 		exit 0
 	fi
-	if [ -z $2 ] ; then
-		n=1
-	else
-		n=$2
-	fi
-	if [ $n = 0 ] ; then
-		$0 rmtest
+	n=1
+	[ -z "$3" ] || n=$3
+	if [ "$n" = 0 ] ; then
+		$0 rmtest $MNT
 		exit 0
 	fi
-	$0 mktest
+	$0 mktest $MNT
 	echo
 	echo Running snapshot test $n:
 	echo ------------------------
-	if [ ! -z $3 ] ; then
-		sleep $3 # delay between tests
-	fi
-	if [ ! -z $4 ] ; then
-		M=$4
-	else
-		M=1
-	fi
+	M=1
+	[ -z "$4" ] || M=$4
 	F=${M}M
-	cd $MNT/$TESTDIR > /dev/null
+	cd $TESTDIR > /dev/null
 	NOTRUNC="conv=notrunc"
 	# uncomment the following line to run in-place write tests
 	INPLACE=$NOTRUNC
@@ -549,83 +507,47 @@ case "$CMD" in
 		md5sum $F.$i || exit 1
 	done > md5list
 	cd - > /dev/null
-	$0 lstest || exit 1
+	$0 lstest $MNT || exit 1
 	s=$n
-	$0 take $s || exit 1
+	$0 take $SNAPMNT$s || exit 1
 	case "$n" in
   	  1)
 		echo Create test:
 		echo ------------
 		echo 'Creating d.txt'
-		echo dodo > $MNT/D/d.txt
+		echo dodo > $TESTDIR/D/d.txt
 		echo 'Creating e.txt'
-		echo emu > $MNT/E/e.txt
+		echo emu > $TESTDIR/E/e.txt
 	  ;;
 	  2)
 		echo Write test:
 		echo -----------
 		echo 'Writing b.txt (append)'
-		echo 'barracuda' >> $MNT/B/b.txt
+		echo 'barracuda' >> $TESTDIR/B/b.txt
 		echo 'Writing c.txt (truncate)'
-		echo 'crocodile' > $MNT/C/c.txt
+		echo 'crocodile' > $TESTDIR/C/c.txt
 	  ;;
 	  3)
 		echo Remove test:
 		echo ------------
 		echo "Truncating c.txt (to size $TRUNCSIZE)"
-		truncate -s $TRUNCSIZE $MNT/C/c.txt
+		truncate -s $TRUNCSIZE $TESTDIR/C/c.txt
 		echo 'Removing d.txt'
-		rm $MNT/D/d.txt
+		rm $TESTDIR/D/d.txt
 	  ;;
 	  4)
 		echo Restore test:
 		echo -------------
-		f=$( ls -v $SNAPDIR/ | head -n 1 )
+		f=1
 		echo 'Restoring from snapshot' $f
-		if ! grep $SNAPMNT$f /proc/mounts ; then
-			$0 mount $f || exit 1
-		fi
-		rm -rf $MNT/?
-		cp -R $SNAPMNT$f/? $MNT/
-		$0 umount $f || exit 1
-	  ;;
-	  5)
-		echo Delete excluded test:
-		echo ---------------------
-	  	#echo Removing excluded files
-	  	#rm $MNT/*M
-	  ;;
-	  6)
-		echo Delete reallocated test:
-		echo ------------------------
-		#echo Removing /$F
-		#rm $MNT/$F
-	  ;;
-	  7)
-		echo Shrink snapshots test:
-		echo ---------------------
-		$0 mount 1
-		for f in 5 6 4 3 2 ; do
-			echo 'Deleting snapshot' $f
-			$0 delete $f 2> /dev/null
-			$0 stat
-		done
-	  ;;
-	  8)
-		echo Merge snapshots test:
-		echo ---------------------
-		$0 umount 1
-		for f in 7 ; do
-			echo 'Deleting snapshot' $f
-			$0 delete $f 2> /dev/null
-			$0 stat
-		done
+		rm -rf $TESTDIR/?
+		cp -R $SNAPMNT$f/$SNAPTEST/? $TESTDIR/
 	  ;;
 	esac || exit 1
 	echo .
-	$0 lstest || exit 1
-	$0 lstest $s || exit 1
-	$0 stat
+	$0 lstest $MNT || exit 1
+	$0 lstest $SNAPMNT$s || exit 1
+	$0 list $MNT
 	;;
 
   *)
