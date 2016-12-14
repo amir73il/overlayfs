@@ -26,6 +26,8 @@ SCRIPT_NAME=$(basename $0)
 SCRIPT_VER=0.1
 FSTYPE=overlay
 SCRIPT_DESC="$FSTYPE snapshot management script"
+CMD="$1"
+TESTDIR=test
 
 version()
 {
@@ -39,24 +41,51 @@ usage()
 	echo "usage: $SCRIPT_NAME version"
 	echo
 	echo "$FSTYPE snapshot commands:"
+	echo "usage: $SCRIPT_NAME list [<path>|-a]"
 	echo "usage: $SCRIPT_NAME {create|take}  <path>[[/]@[/]<snapshot-name>] (default-name=<date.time>)"
-	echo "usage: $SCRIPT_NAME {mount|umount} <path>"
+	echo "usage: $SCRIPT_NAME {mount|umount}  <path>"
 	echo "usage: $SCRIPT_NAME {delete|remove} <path>[/]@[/]<snapshot-name>"
 	echo
 	echo "snapshot command parameter may be given in ZFS style <path>@<snapshot-name>"
         echo "and it may be given as the snapshot directory path <path>/@/<snapshot-name>."
 	echo "If <snapshot-name> part is omitted, command may apply to all snapshots (e.g. umount)."
 	echo
-	echo "$FSTYPE test commands:"
-	echo "usage: $SCRIPT_NAME {test|tests} [test-number] [delay-sec] [file-size-mb]"
+	echo "$FSTYPE snapshot test commands:"
+	echo "usage: $SCRIPT_NAME {test|tests} <path> [test-number] [delay-sec] [file-size-mb]"
 	echo
 	exit 1
 }
 
 error()
 {
-	echo "$SCRIPT_NAME: $1" >&2
+	echo "$SCRIPT_NAME: $CMD: $1" >&2
 	exit 1
+}
+
+# parse <path>[[/]@[/]<snapshot-name>] argument
+parse_path_snapshot_arg()
+{
+	MNT=$( echo $1 | ( IFS=$IFS@ ; read a b ; echo $a ) )
+	snap=$( echo $1 | ( IFS=$IFS@ ; read a b ; echo $b ) )
+	# strip / from <path>/ and /<snapshot-name>
+	MNT=${MNT%/}
+	snap=${snap#/}
+	# directory inside <path> to store snapshot related files
+	SNAPDIR=$MNT/@
+	# directory prefix for snapshot mount points
+	# snaphot mount points will be created as $SNAPMNT<snapshot-name>
+	SNAPMNT=$MNT/@/
+	# file to store snapshots stack
+	SNAPSHOTS="$SNAPDIR/.snapshots"
+
+	# <path> arg is optional for list command
+	if [ "$CMD" = list ] && [ -z "$MNT" -o "$MNT" = "-a" ]; then
+		return
+	fi
+	[ -n "$MNT" ] || usage
+	[ -d "$MNT" ] || error "'$MNT' is not a directory!"
+	export MNT
+	S=$MNT@$snap
 }
 
 current_snapshot()
@@ -88,12 +117,20 @@ snapshot_in_stack()
 
 snapshot_is_deleted()
 {
-	[ -d $SNAPDIR/.$1 ]
+	[ ! -d $SNAPDIR/$1 ]
 }
 
 snapshot_exists()
 {
-	[ -d $SNAPDIR/$1 ] || snapshot_is_deleted $1 || snapshot_in_stack $1
+	local s=$1
+
+	if [ -z "$s" ]; then
+		# Does any snapshot exist?
+		[ -s $SNAPSHOTS ]
+	else
+		# Does snapshot $s exist?
+		[ -d $SNAPDIR/$s ] || [ -d $SNAPDIR/.$s ] || snapshot_in_stack $s
+	fi
 }
 
 create_snapshot()
@@ -131,7 +168,13 @@ remove_snapshot()
 
 snapshot_is_mounted()
 {
-	grep -q "^\S\+ $MNT snapshot" /proc/mounts
+	local s=$1
+
+	if [ -z "$s" ]; then
+		grep -q "^\S\+ $MNT snapshot" /proc/mounts
+	else
+		grep -q "^\S\+ $SNAPMNT$s overlay" /proc/mounts
+	fi
 }
 
 mount_snapshot()
@@ -146,80 +189,104 @@ umount_snapshot()
 	umount $MNT || exit 1
 }
 
-if [ $# -ge 2 ] && [ $1 != help ] && [ $1_$2 != $1_help ] && \
-	[ $1 != version ] && [ _$1 != _test ] && [ $1 != tests ] ; then
-	# parse <path>[[/]@[/]<snapshot-name>] argument
-	MNT=$( echo $2 | ( IFS=$IFS@ ; read a b ; echo $a ) )
-	snap=$( echo $2 | ( IFS=$IFS@ ; read a b ; echo $b ) )
-	# strip / from <path>/ and /<snapshot-name>
-	MNT=${MNT%/}
-	snap=${snap#/}
-	# directory inside <path> to store snapshot related files
-	SNAPDIR=$MNT/@
-	# directory prefix for snapshot mount points
-	# snaphot mount points will be created as $SNAPMNT<snapshot-name>
-	SNAPMNT=$MNT/@/
-	# file to store snapshots stack
-	SNAPSHOTS="$SNAPDIR/.snapshots"
-fi
+list_snapshots()
+{
+	echo "Snapshots list at '$MNT':"
+	echo "-------------------------"
+	echo "* = current, M = mounted, D = deleted"
+	echo
+	echo "Status Name"
+	echo "-------------------------"
+	for s in $( tac $SNAPSHOTS ) ; do
+		current=" "
+		status=" "
+		if snapshot_is_deleted $s ; then
+			status="D"
+		fi
+		if snapshot_is_mounted $s ; then
+			status="M"
+		fi
+		if snapshot_is_current $s ; then
+			current="*"
+		fi
+		echo "$current$status     $s"
+	done
+}
 
+list_snapshot_mounts()
+{
+	local s=$1
 
-if [ ! -z $1 ] && [ $1 != help ] && [ $1_$2 != $1_help ] && \
-	[ $1 != version ] && [ _$1 != _test ] && [ $1 != tests ] ; then
-	[ -n "$MNT" ] || usage
-	[ -d "$MNT" ] || error "'$MNT' is not a directory!"
-	export MNT
-	S=$MNT@$snap
-fi
+	mount -t snapshot | ( while read dev on path opt; do
+		[ -z "$s" ] || [ "$s" = "$path" ] || continue
+		echo "$dev on $path"
+	done )
+}
 
-TESTDIR=test
+list_all_mounted_snapshots()
+{
+	mount -t snapshot | ( while read dev on path opt; do
+		$0 list "$path"
+	done )
+}
 
-# See how we were called.
-case "$1" in
-# Snapshot global commands
+# Global commands that take no <path>[@<snapshot>] argument
+[ -n "$CMD" ] || usage
+case "$CMD" in
   help)
-	if [ -z $2 ] ; then
-		usage
-	else
-		$0 $2 help
-	fi
+	[ -n "$2" ] || usage
+	# help <cmd> => <cmd> help
+	exec "$0" "$2" help
 	;;
   version)
-	if [ $1_$2 = $1_help ] ; then
-		echo "$1: display $SCRIPT_NAME version."
+	if [ "$2" = help ]; then
+		echo "version: display $SCRIPT_NAME version."
 		exit 0
 	fi
 	version
 	;;
+esac
 
-  stat)
-	if [ $1_$2 = $1_help ] ; then
-		echo "stat: display status of $FSTYPE filesystem and all its snapshots."
-		echo "snapshot attributes are displayed in short format. to display"
-		echo "attributes in long format use the '$0 lsattr' command."
-		echo "usage: $SCRIPT_NAME stat [$FSTYPE-mount]"
+# Snapshot commands that take <path>[@<snapshot>] argument
+[ "$2" = help ] || parse_path_snapshot_arg "$2"
+case "$CMD" in
+  list)
+	if [ "$2" = help ]; then
+		echo "list: display list and status of $FSTYPE snapshots."
+		echo "usage: $SCRIPT_NAME list [<path>|-a]"
 		exit 0
 	fi
-	echo "Mounted $FSTYPE filesystem and snapshots:"
-	df -h $MNT $SNAPMNT* 2> /dev/null
-	echo .
-	echo "Snapshots list:"
-	echo "id inode attributes disk-usage mtime filename"
-	echo "---------------------------------------------"
-	for s in $( ls -vr $SNAPDIR/* ) ; do
-		( echo "$( $LSSNAP -v $s ) " ; \
-			echo "$( du -h $s ) " ; \
-			echo "$( ls -lih --color=never $s ) " ) | \
-		( read id attr a ; read du b ; read ino c d e f g mm dd tt fname h ; \
-			echo $id $ino $attr $du $mm $dd $tt $fname )
-	done 2> /dev/null
+	if [ -z "$MNT" ]; then
+		# List all snapshot mounts
+		echo "$FSTYPE snapshot mounts:"
+		list_snapshot_mounts
+		echo
+		echo "run '$SCRIPT_NAME list <path>' to list $FSTYPE snapshots at <path>"
+		echo "run '$SCRIPT_NAME list -a' to list all mounted $FSTYPE snapshots"
+	elif [ "$MNT" = "-a" ]; then
+		# List all snapshots overlays of all snapshot mounts
+		list_all_mounted_snapshots
+		exit 0
+	elif ! snapshot_exists ; then
+		echo "No $FSTYPE snapshots at '$MNT'."
+		exit 0
+	else
+		# List snapshot overlays of snapshot mount
+		if snapshot_is_mounted ; then
+			echo "$FSTYPE snapshot at '$MNT' is mounted:"
+			list_snapshot_mounts $MNT
+		else
+			echo "$FSTYPE snapshot at '$MNT' is not mounted."
+		fi
+		echo
+		list_snapshots
+	fi
 	echo .
 	;;
 
-# Snapshot control commands (single snapshot)
   create|take)
-	if [ $1_$2 = $1_help ] ; then
-		echo "$1: create a new snapshot."
+	if [ "$2" = help ]; then
+		echo "$CMD: create a new snapshot."
 		echo "usage: $SCRIPT_NAME {create|take} <path>[[/]@[/]<snapshot-name>] (default-name=<date.time>)"
 		exit 0
 	fi
@@ -229,7 +296,7 @@ case "$1" in
 		S=$MNT@$snap
 	fi
 	if snapshot_exists $snap ; then
-		error "$1: snapshot $S already exists!"
+		error "snapshot $S already exists!"
 	fi
 
 	# For now new snapshot requires umount/mount of all snapshots
@@ -240,7 +307,7 @@ case "$1" in
 	echo .
 	;;
   delete)
-	if [ $1_$2 = $1_help ] ; then
+	if [ "$2" = help ]; then
 		echo "delete: umount a snapshot and mark it for deletion."
 		echo "any non-mounted snapshot can be marked for deletion"
 		echo "but some snapshot deletion is deferred to later time."
@@ -249,13 +316,13 @@ case "$1" in
 	fi
 	[ -n "$snap" ] || usage
 	if snapshot_is_deleted $snap ; then
-		error "$1: snapshot $S already deleted!"
+		error "snapshot $S already deleted!"
 	fi
 	if ! snapshot_exists $snap ; then
-		error "$1: snapshot $S doesn't exist!"
+		error "snapshot $S doesn't exist!"
 	fi
 	if snapshot_is_current $snap ; then
-		error "$1: current snapshot $S cannot be deleted!"
+		error "current snapshot $S cannot be deleted!"
 	fi
 
 	delete_snapshot $snap
@@ -263,7 +330,7 @@ case "$1" in
 	echo .
 	;;
   remove)
-	if [ $1_$2 = $1_help ] ; then
+	if [ "$2" = help ]; then
 		echo "remove: delete a snapshot permanently."
 		echo "this command will fail for active snapshot and snapshots"
 		echo "in use by older snapshots. try using the delete command."
@@ -272,13 +339,13 @@ case "$1" in
 	fi
 	[ -n "$snap" ] || usage
 	if snapshot_is_mounted; then
-		error "$1: cannot remove snapshot while snapshots are mounted!"
+		error "cannot remove snapshot while snapshots are mounted!"
 	fi
 	if ! snapshot_exists $snap ; then
-		error "$1: snapshot $S doesn't exist!"
+		error "snapshot $S doesn't exist!"
 	fi
 	if ! snapshot_is_oldest $snap ; then
-		error "$1: non-oldest snapshot $S cannot be removed!"
+		error "non-oldest snapshot $S cannot be removed!"
 	fi
 
 	remove_snapshot $snap
@@ -286,30 +353,29 @@ case "$1" in
 	echo .
 	;;
 
-# Snapshot control commands (single or all snapshots)
   mount)
-	if [ $1_$2 = $1_help ] ; then
-		echo "mount: mount all snapshots."
+	if [ "$2" = help ]; then
+		echo "mount: mount all $FSTYPE snapshots at <path>."
 		echo "usage: $SCRIPT_NAME mount <path>"
 		exit 0
 	fi
 	S=$MNT@$(current_snapshot)
 	if snapshot_is_mounted; then
-		error "$1: snapshot $S is already mounted!"
+		error "snapshot $S is already mounted!"
 	fi
 	mount_snapshot
 	echo snapshot $S is mounted
 	echo .
 	;;
   umount)
-	if [ $1_$2 = $1_help ] ; then
-		echo "umount: umount all snapshots."
+	if [ "$2" = help ]; then
+		echo "umount: unmount all $FSTYPE snapshots at <path>."
 		echo "usage: $SCRIPT_NAME umount <path>"
 		exit 0
 	fi
 	S=$MNT@$(current_snapshot)
 	if ! snapshot_is_mounted; then
-		error "$1: snapshot $S is not mounted!"
+		error "snapshot $S is not mounted!"
 	fi
 	umount_snapshot
 	echo snapshot $S was unmounted
