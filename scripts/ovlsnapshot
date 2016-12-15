@@ -198,14 +198,20 @@ umount_all_mounted_snapshots()
 	done )
 }
 
+snapshot_du()
+{
+	du -hs "$SNAPDIR/$1/u" 2>/dev/null | \
+		( read a b &&  echo $a )
+}
+
 list_snapshots()
 {
 	echo "Snapshots list at '$MNT':"
 	echo "-------------------------"
 	echo "* = current, M = mounted, D = deleted"
 	echo
-	echo "Status Name"
-	echo "-------------------------"
+	echo "Status Name\tDisk-usage"
+	echo "--------------------------"
 	for s in $( tac $SNAPSHOTS ) ; do
 		current=" "
 		status=" "
@@ -218,7 +224,7 @@ list_snapshots()
 		if snapshot_is_current $s ; then
 			current="*"
 		fi
-		echo "$current$status     $s"
+		echo "$current$status     $s\t$(snapshot_du $s)"
 	done
 }
 
@@ -252,6 +258,17 @@ snapshot_status()
 	else
 		echo "$FSTYPE snapshot $S is not mounted."
 	fi
+
+	echo
+	echo -n "$MNT filesystem disk usage: "
+	df -h $MNT | tail -n 1 | \
+		( read d t u f p m && echo "$u $f $p" )
+	echo -n "$MNT directory  disk usage: "
+	du -hs -x --exclude=@ "$MNT" | \
+		( read u m && echo "$u" )
+	echo -n "$MNT snapshots  disk usage: "
+	du -hs -x "$SNAPDIR" | \
+		( read u m && echo "$u" )
 }
 
 # Global commands that take no <path>[@<snapshot>] argument
