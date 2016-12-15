@@ -3,10 +3,10 @@
 #
 # Overlayfs snapshot mount helper
 #
-# - Create snapshot dir <mnt>/@ and snapshot 0 if non exists
+# - Check if snapshots stack exists at <mnt>/@/.snapshots
 # - Bind shared mount at <mnt>/@
 # - Mount snapshot mount at <mnt>
-# - Mount olds snapshots at <mnt>/@/<id>..
+# - Mount olds snapshots at <mnt>/@/<id>/m
 #
 # * If any mount flags other than -o rw are passed to helper,
 #   it passes the command as is without doing the above
@@ -47,8 +47,7 @@ error()
 # No support for mount options at the moment
 if [ -n "$*" -a "$*" != "-o rw" ]; then
 	echo "$*" > /tmp/mount.snapshot.in
-	mount -i -t snapshot "$dev" "$mnt" $*
-	exit $?
+	exec mount -i -t snapshot "$dev" "$mnt" $*
 fi
 
 # Verify that overlayfs snapshot feature is enabled
@@ -56,99 +55,87 @@ grep -wq 'overlay' /proc/filesystems || modprobe overlay
 grep -wq 'snapshot' /proc/filesystems || \
 	error "overlayfs snapshots feature not enabled."
 
-# Verify snapshot is not already mounted - nesting is not allowed
-! grep -q "^\S\+ $mnt snapshot" /proc/mounts || \
-	error "overlayfs snapshot already mounted at $mnt."
+# Verify snapshot is not already mounted on child or parent path
+# because nesting is not allowed
+mounted=$(mount -t snapshot | while read d on m opt; do echo $m; done)
+for m in $mounted; do
+	if ( echo $m | grep -q "^$mnt" ) || ( echo $mnt | grep -q "^$m" ); then
+		error "overlapping overlayfs snapshot already mounted at '$m'."
+	fi
+done
 
 lower="$mnt"
 snapdir="$mnt/@"
 snapshots="$snapdir/.snapshots"
 
-# If we create snapdir, we should remove it on failure
-[ -d "$snapdir" ] || cleanup_snapdir=true
-
-id=0
 [ ! -s "$snapshots" ] || id=$(tail -n 1 "$snapshots")
+
+if [ -z "$id" ]; then
+	# No current snapshot - mount pass through snapshot mount
+	exec mount -i -t snapshot "$dev" "$mnt" -o"upperdir=$lower"
+fi
 
 cd "$lower" || exit 1
 
 # Relative to $lower to keep overlay mount options shorter
-base="@/$id"
-upper="$base/u"
-work="$base/w"
-snap="$base"
-
-# If we create a new snapshot, we should remove it on failure
-[ -d "$snap" ] || new_snap=true
+current="@/$id"
+upper="$current/u"
+work="$current/w"
+snapmnt="$current/m"
 
 tmpdir=/tmp/snapshot.$$
-tmpsnap="$tmpdir/$id"
+tmpmnt="$tmpdir/$id/m"
 trap "_cleanup" 0 1 2 3 15
 _cleanup()
 {
 	err=$?
 	# Cleanup snapshot $id temp mounts
-	umount -i "$tmpsnap" 2>/dev/null
+	umount -i "$tmpmnt" 2>/dev/null
 	umount -i "$tmpdir" 2>/dev/null
 	umount -i "$snapdir" 2>/dev/null
 	rmdir $tmpdir 2>/dev/null
-	if [ $err != 0 ]; then
-		# Cleanup new created directories on failure
-		[ -z "$new_snap" ] || rm -rf "$mnt/$snap"
-		[ -z "$cleanup_snapdir" ] || rm -rf "$snapdir"
-	fi
 	exit $err
 }
 
 mount_old_snapshots()
 {
-	local old_snapshots=$snap
+	local old_snapshots=$snapmnt
 
 	# mount snapshots from newest to oldest
 	tac "$snapshots" | while read old; do
 		[ "$old" != "$id" ] || continue
 		oldsnap="@/$old"
-		delsnap="@/.$old"
-		oldmnt=
-		if [ -d "$oldsnap" ]; then
-			# mount only non-deleted snapshots
-			oldmnt="$oldsnap"
-		elif [ -d "$delsnap" ]; then
-			# but chain deleted snapshot in lower
-			oldsnap="$delsnap"
-		else
-			continue
-		fi
+		oldmnt="$oldsnap/m"
+		[ -d "$oldsnap" ] || continue
 		old_snapshots="$oldsnap/u:$old_snapshots"
-		[ -n "$oldmnt" ] || continue
+		[ -d "$oldmnt" ] || continue
 		mount -i -t overlay "$dev@$old" "$oldmnt" \
 			-o"ro,lowerdir=$old_snapshots"
 	done
 }
 
-# Create new snapshot dir with empty upper/work
-mkdir -p "$snap" "$upper" "$work" || exit 1
+# Verify current snapshot dirs
+[ -d "$snapmnt" -a -d "$upper" -a -d "$work" ] || \
+	error "missing snapshot '$current' directories."
 
-# Whiteout snapshots dir inside upper
-[ -c "$upper/@" ] || mknod "$upper/@" c 0 0 || exit 1
+# Verify whiteout of snapshots dir inside upper
+[ -c "$upper/@" ] || \
+	error "missing whiteout of snapshot '$current' directories."
 
 # Make shared mount clone of the real lower mount
-mount --bind "$snapdir" "$snapdir"
-mount --make-shared "$snapdir"
-mkdir -p "$tmpdir"
-mount --bind "$snapdir" "$tmpdir"
+mount --bind "$snapdir" "$snapdir" || exit 1
+mount --make-shared "$snapdir" || exit 1
+mkdir -p "$tmpdir" || exit 1
+mount --bind "$snapdir" "$tmpdir" || exit 1
 
-# Mount the snapshot overlay and snapshot mount
+# Mount the current snapshot overlay and snapshot mount
 mount -i -t overlay "$dev@$id" -o"lowerdir=$lower,upperdir=$upper,workdir=$work" \
-	"$snap" || exit 1
-mount -i -t snapshot "$dev@$id" -o"upperdir=$lower,snapshot=$snap" \
+	"$snapmnt" || exit 1
+mount -i -t snapshot "$dev@$id" -o"upperdir=$lower,snapshot=$snapmnt" \
 	"$mnt" || exit 1
 
-# Write new snapshot id to snapshots stack
-grep -qs "^$id$" "$snapshots" || echo "$id" >> "$snapshots"
-
-# Bind the (now covered) snapshot overlay above the snapshot mount
-mount --bind -r "$tmpsnap" "$mnt/$snap" || exit 1
+# Bind the (now covered) current snapshot overlay above the snapshot mount
+mount --bind -r "$tmpmnt" "$mnt/$snapmnt" || exit 1
 
 # Mount older snapshots
 mount_old_snapshots

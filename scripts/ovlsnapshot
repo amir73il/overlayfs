@@ -72,7 +72,7 @@ parse_path_snapshot_arg()
 	# directory inside <path> to store snapshot related files
 	SNAPDIR=$MNT/@
 	# directory prefix for snapshot mount points
-	# snaphot mount points will be created as $SNAPMNT<snapshot-name>
+	# snaphot mount points will be created as $SNAPMNT<snapshot-name>/m
 	SNAPMNT=$MNT/@/
 	# file to store snapshots stack
 	SNAPSHOTS="$SNAPDIR/.snapshots"
@@ -118,7 +118,7 @@ snapshot_in_stack()
 
 snapshot_is_deleted()
 {
-	[ ! -d $SNAPDIR/$1 ]
+	[ ! -d $SNAPDIR/$1/m ]
 }
 
 snapshot_exists()
@@ -130,7 +130,7 @@ snapshot_exists()
 		[ -s $SNAPSHOTS ]
 	else
 		# Does snapshot $s exist?
-		[ -d $SNAPDIR/$s ] || [ -d $SNAPDIR/.$s ] || snapshot_in_stack $s
+		[ -d $SNAPDIR/$s ] || snapshot_in_stack $s
 	fi
 }
 
@@ -140,6 +140,7 @@ create_snapshot()
 
 	mkdir -p $SNAPDIR/$s/u || exit 1
 	mkdir -p $SNAPDIR/$s/w || exit 1
+	mkdir -p $SNAPDIR/$s/m || exit 1
 	mknod $SNAPDIR/$s/u/@ c 0 0 || exit 1
 	echo $s >> $SNAPSHOTS || exit 1
 	sync
@@ -149,9 +150,9 @@ delete_snapshot()
 {
 	local s=$1
 
-	umount -i $SNAPDIR/$s 2>/dev/null
+	umount -i $SNAPDIR/$s/m 2>/dev/null
 	rm -rf $SNAPDIR/$s/w || exit 1
-	mv $SNAPDIR/$s $SNAPDIR/.$s|| exit 1
+	rm -rf $SNAPDIR/$s/m || exit 1
 	sync
 }
 
@@ -159,8 +160,8 @@ remove_snapshot()
 {
 	local s=$1
 
-	snapshot_is_deleted $s || delete_snapshot $s
-	rm -rf $SNAPDIR/.$s || exit 1
+	umount -i $SNAPDIR/$s/m 2>/dev/null
+	rm -rf $SNAPDIR/$s || exit 1
 	grep -v "^$1$" $SNAPSHOTS > $SNAPSHOTS.tmp
 	sync
 	mv $SNAPSHOTS.tmp $SNAPSHOTS
@@ -174,7 +175,7 @@ snapshot_is_mounted()
 	if [ -z "$s" ]; then
 		grep -q "^\S\+ $MNT snapshot" /proc/mounts
 	else
-		grep -q "^\S\+ $SNAPMNT$s overlay" /proc/mounts
+		grep -q "^\S\+ $SNAPMNT$s/m overlay" /proc/mounts
 	fi
 }
 
@@ -434,7 +435,7 @@ case "$CMD" in
 		d=$TESTDIR
 	else
 		echo "Files in snapshot $snap:"
-		d=$SNAPMNT$snap/$SNAPTEST
+		d=$SNAPMNT$snap/m/$SNAPTEST
 	fi
 	if [ -d $d ] ; then
 		cd $d > /dev/null
@@ -455,7 +456,7 @@ case "$CMD" in
 	[ -z "$3" ] || N=$3
 	$0 umount $MNT
 	for s in $( cat $SNAPSHOTS 2> /dev/null ) ; do
-		$0 remove $SNAPMNT$s 2> /dev/null
+		$0 remove $SNAPDIR/$s 2> /dev/null
 	done
 	$0 mount $MNT
 	for n in $( seq 0 $N ) ; do
@@ -463,7 +464,7 @@ case "$CMD" in
 	done
 	$0 lstest $MNT
 	for n in $( seq 1 $N ) ; do
-		$0 lstest $SNAPMNT$n
+		$0 lstest $SNAPDIR/$n
 	done
 	;;
   test)
@@ -509,7 +510,7 @@ case "$CMD" in
 	cd - > /dev/null
 	$0 lstest $MNT || exit 1
 	s=$n
-	$0 take $SNAPMNT$s || exit 1
+	$0 take $SNAPDIR/$s || exit 1
 	case "$n" in
   	  1)
 		echo Create test:
@@ -541,12 +542,12 @@ case "$CMD" in
 		f=1
 		echo 'Restoring from snapshot' $f
 		rm -rf $TESTDIR/?
-		cp -R $SNAPMNT$f/$SNAPTEST/? $TESTDIR/
+		cp -R $SNAPMNT$f/m/$SNAPTEST/? $TESTDIR/
 	  ;;
 	esac || exit 1
 	echo .
 	$0 lstest $MNT || exit 1
-	$0 lstest $SNAPMNT$s || exit 1
+	$0 lstest $SNAPDIR/$s || exit 1
 	$0 list $MNT
 	;;
 

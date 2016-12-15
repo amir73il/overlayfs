@@ -3,8 +3,9 @@
 #
 # Overlayfs snapshot umount helper
 #
-# - Unmount snapshot overlays listed in <mnt>/@/snapshots
+# - Unmount snapshot overlays <mnt>/@/*/m
 # - Unmount snapshot mount at <mnt>
+# - Unmount shared mount at <mnt>/@
 #
 #-----------------------------------------------------------------------
 #
@@ -47,12 +48,12 @@ umount_snapshots()
 {
 	# Unmount snapshot overlays recorded in snapshots stack
 	[ ! -s "$snapshots" ] || cat "$snapshots" | while read id; do
-		umount -i "$snapdir/$id" 2>/dev/null
+		umount -i "$snapdir/$id/m" 2>/dev/null
 	done
 
 	# Cleanup leftover snapshot overlays not recorded in snapshots stack
 	if grep -q "^\S\+@\S\+ $snapdir/\S\+ overlay" /proc/mounts; then
-		umount -i "$snapdir"/* 2>/dev/null
+		umount -i "$snapdir"/*/m 2>/dev/null
 	fi
 }
 
