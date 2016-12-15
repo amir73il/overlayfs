@@ -191,6 +191,13 @@ umount_snapshot()
 	umount $MNT || exit 1
 }
 
+remount_snapshot()
+{
+	# TODO: remount with -osnapshot=$(current_snapshot)
+	umount_snapshot
+	mount_snapshot
+}
+
 umount_all_mounted_snapshots()
 {
 	mount -t snapshot | ( while read dev on path opt; do
@@ -341,9 +348,8 @@ case "$CMD" in
 	fi
 
 	# For now new snapshot requires umount/mount of all snapshots
-	umount_snapshot
 	create_snapshot $snap
-	mount_snapshot
+	remount_snapshot
 	echo "snapshot $S was created"
 	echo .
 	;;
