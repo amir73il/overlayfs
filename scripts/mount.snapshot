@@ -68,11 +68,17 @@ lower="$mnt"
 snapdir="$mnt/@"
 snapshots="$snapdir/.snapshots"
 
+# Disable redirect_dir because of rename issue with multiple snapshots:
+# https://github.com/amir73il/overlayfs/issues/1
+mntopts="-oredirect_dir=off"
+snapmntopts="-oredirect_dir=off"
+oldsnapmntopts="-oredirect_dir=off"
+
 [ ! -s "$snapshots" ] || id=$(tail -n 1 "$snapshots")
 
 if [ -z "$id" ]; then
 	# No current snapshot - mount pass through snapshot mount
-	exec mount -i -t snapshot "$dev" "$mnt" -o"upperdir=$lower"
+	exec mount -i -t snapshot "$dev" "$mnt" -o"upperdir=$lower" "$mntopts"
 fi
 
 cd "$lower" || exit 1
@@ -110,6 +116,7 @@ mount_old_snapshots()
 		old_snapshots="$oldsnap/u:$old_snapshots"
 		[ -d "$oldmnt" ] || continue
 		mount -i -t overlay "$dev@$old" "$oldmnt" \
+			"$oldsnapmntopts" \
 			-o"ro,lowerdir=$old_snapshots"
 	done
 }
@@ -129,10 +136,10 @@ mkdir -p "$tmpdir" || exit 1
 mount --bind "$snapdir" "$tmpdir" || exit 1
 
 # Mount the current snapshot overlay and snapshot mount
-mount -i -t overlay "$dev@$id" -o"lowerdir=$lower,upperdir=$upper,workdir=$work" \
-	"$snapmnt" || exit 1
-mount -i -t snapshot "$dev@$id" -o"upperdir=$lower,snapshot=$snapmnt" \
-	"$mnt" || exit 1
+mount -i -t overlay "$dev@$id" "$snapmnt" "$snapmntopts" \
+	-o"lowerdir=$lower,upperdir=$upper,workdir=$work" || exit 1
+mount -i -t snapshot "$dev@$id" "$mnt" "$mntopts" \
+	-o"upperdir=$lower,snapshot=$snapmnt" || exit 1
 
 # Bind the (now covered) current snapshot overlay above the snapshot mount
 mount --bind -r "$tmpmnt" "$mnt/$snapmnt" || exit 1
