@@ -440,7 +440,10 @@ case "$CMD" in
 	if [ -d $d ] ; then
 		cd $d > /dev/null
 		grep -v xxx ?/* 2>/dev/null
-		[ -s md5list ] && (md5sum -c md5list || exit 1)
+		echo .
+		if [ -s md5list ]; then
+			md5sum -c md5list || exit 1
+		fi
 		cd - > /dev/null
 		echo .
 	fi
@@ -496,18 +499,22 @@ case "$CMD" in
 	TRUNCSIZE=4
 	echo Appending $F zeros to $F.1 $DIRECT
 	# append writes to new allocated blocks
-	dd if=/dev/zero bs=1M count=$M of=$F.1 $NOTRUNC oflag=append $DIRECT status=noxfer || exit 1
+	dd if=/dev/zero bs=1M count=$M of=$F.1 $NOTRUNC oflag=append $DIRECT status=noxfer \
+		2>/dev/null || exit 1
 	echo Writing $F random data to $n files
 	for i in $( seq 1 $n ) ; do
-		# 1st rewrite moves existing blocks to snapshot and allocates new blocks
-		dd if=/dev/urandom bs=1M count=$M of=$F.$i $INPLACE status=noxfer || exit 1
-		# subsequent rewrites doesn't move blocks to snapshot
-		dd if=/dev/urandom bs=1M count=$M of=$F.1 $INPLACE $DIRECT status=noxfer || exit 1
+		# 1st rewrite splits reflink extents and allocates new blocks
+		dd if=/dev/urandom bs=1M count=$M of=$F.$i $INPLACE status=noxfer \
+			2>/dev/null || exit 1
+		# subsequent rewrites doesn't change reflink extents
+		dd if=/dev/urandom bs=1M count=$M of=$F.1 $INPLACE $DIRECT status=noxfer \
+			2>/dev/null || exit 1
 	done
 	for i in $( seq 1 $n ) ; do
 		md5sum $F.$i || exit 1
-	done > md5list
+	done >> md5list
 	cd - > /dev/null
+	echo .
 	$0 lstest $MNT || exit 1
 	s=$n
 	$0 take $SNAPDIR/$s || exit 1
@@ -545,6 +552,9 @@ case "$CMD" in
 		cp -R $SNAPMNT$f/m/$SNAPTEST/? $TESTDIR/
 	  ;;
 	esac || exit 1
+	cd $TESTDIR > /dev/null
+	md5sum ?/* > md5list || exit 1
+	cd - > /dev/null
 	echo .
 	$0 lstest $MNT || exit 1
 	$0 lstest $SNAPDIR/$s || exit 1
