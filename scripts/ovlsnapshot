@@ -193,9 +193,8 @@ umount_snapshot()
 
 remount_snapshot()
 {
-	# TODO: remount with -osnapshot=$(current_snapshot)
-	umount_snapshot
-	mount_snapshot
+	# remount with -osnapshot=$(current_snapshot)
+	mount -t snapshot snapshot $MNT -o remount || exit 1
 }
 
 umount_all_mounted_snapshots()

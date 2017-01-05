@@ -45,9 +45,15 @@ error()
 }
 
 # No support for mount options at the moment
-if [ -n "$*" -a "$*" != "-o rw" ]; then
+if [ -n "$1" -a "$1" != "-o" ]; then
+       error "invalid snapshot mount options '$*'"
+fi
+
+shift
+mntopts="$1"
+if [ -n "$mntopts" -a "$mntopts" != "rw" -a "$mntopts" != "rw,remount" ]; then
 	echo "$*" > /tmp/mount.snapshot.in
-	exec mount -i -t snapshot "$dev" "$mnt" $*
+	exec mount -i -t snapshot "$dev" "$mnt" -o "$mntopts"
 fi
 
 # Verify that overlayfs snapshot feature is enabled
@@ -59,7 +65,10 @@ grep -wq 'snapshot' /proc/filesystems || \
 # because nesting is not allowed
 mounted=$(mount -t snapshot | while read d on m opt; do echo $m; done)
 for m in $mounted; do
-	if ( echo $m | grep -q "^$mnt" ) || ( echo $mnt | grep -q "^$m" ); then
+	if [ "$m" = "$mnt" ]; then
+		( echo "$mntopts" | grep -q remount ) || \
+			error "overlayfs snapshot already mounted at '$m'."
+	elif ( echo $m | grep -q "^$mnt" ) || ( echo $mnt | grep -q "^$m" ); then
 		error "overlapping overlayfs snapshot already mounted at '$m'."
 	fi
 done
@@ -70,15 +79,15 @@ snapshots="$snapdir/.snapshots"
 
 # Disable redirect_dir because of rename issue with multiple snapshots:
 # https://github.com/amir73il/overlayfs/issues/1
-mntopts="-oredirect_dir=off"
-snapmntopts="-oredirect_dir=off"
-oldsnapmntopts="-oredirect_dir=off"
+mntopts="$mntopts,redirect_dir=off"
+snapmntopts="redirect_dir=off"
+oldsnapmntopts="redirect_dir=off"
 
 [ ! -s "$snapshots" ] || id=$(tail -n 1 "$snapshots")
 
 if [ -z "$id" ]; then
 	# No current snapshot - mount pass through snapshot mount
-	exec mount -i -t snapshot "$dev" "$mnt" -o"upperdir=$lower" "$mntopts"
+	exec mount -i -t snapshot "$dev" "$mnt" -o"upperdir=$lower,$mntopts"
 fi
 
 cd "$lower" || exit 1
@@ -116,8 +125,7 @@ mount_old_snapshots()
 		old_snapshots="$oldsnap/u:$old_snapshots"
 		[ -d "$oldmnt" ] || continue
 		mount -i -t overlay "$dev@$old" "$oldmnt" \
-			"$oldsnapmntopts" \
-			-o"ro,lowerdir=$old_snapshots"
+			-o"ro,lowerdir=$old_snapshots,$oldsnapmntopts"
 	done
 }
 
@@ -136,10 +144,10 @@ mkdir -p "$tmpdir" || exit 1
 mount --bind "$snapdir" "$tmpdir" || exit 1
 
 # Mount the current snapshot overlay and snapshot mount
-mount -i -t overlay "$dev@$id" "$snapmnt" "$snapmntopts" \
-	-o"lowerdir=$lower,upperdir=$upper,workdir=$work" || exit 1
-mount -i -t snapshot "$dev@$id" "$mnt" "$mntopts" \
-	-o"upperdir=$lower,snapshot=$snapmnt" || exit 1
+mount -i -t overlay "$dev@$id" "$snapmnt" \
+	-o"lowerdir=$lower,upperdir=$upper,workdir=$work,$snapmntopts" || exit 1
+mount -i -t snapshot "$dev@$id" "$mnt" \
+	-o"upperdir=$lower,snapshot=$snapmnt,$mntopts" || exit 1
 
 # Bind the (now covered) current snapshot overlay above the snapshot mount
 mount --bind -r "$tmpmnt" "$mnt/$snapmnt" || exit 1
