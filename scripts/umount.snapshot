@@ -1,11 +1,10 @@
 #!/bin/sh
-# umount.snapshot <mnt>
+# umount.snapshot <mnt>/@/_
 #
 # Overlayfs snapshot umount helper
 #
-# - Unmount snapshot overlays <mnt>/@/*/m
-# - Unmount snapshot mount at <mnt>
-# - Unmount shared mount at <mnt>/@
+# - Unmount snapshot overlays <mnt>/@/*/_
+# - Unmount snapshot mount at <mnt>/@/_
 #
 #-----------------------------------------------------------------------
 #
@@ -31,11 +30,15 @@ mnt="${1%/}"
 
 [ -d "$mnt" ] || exit 1
 
+mntdir="$mnt"
+mnt="${mntdir%/@/_}"
+
 # umount.snapshot helper should not take care of mounts
-# not created by mount.snapshot helper. Use the <dev>@<id>
+# not created by mount.snapshot helper. Use the <dev>@*
 # dev argument as indication to helper aided snapshot mount.
 # If this is an unfamiliar snapshot mount - bypass helper.
-if ! grep -q "^\S\+@\S\+ $mnt snapshot" /proc/mounts; then
+if [ "$mnt" = "$mntdir" ] || \
+	! grep -q "^\S\+@.* $mntdir snapshot" /proc/mounts; then
 	echo "$*" > /tmp/umount.snapshot.in
 	umount -i $*
 	exit $?
@@ -48,18 +51,14 @@ umount_snapshots()
 {
 	# Unmount snapshot overlays recorded in snapshots stack
 	[ ! -s "$snapshots" ] || cat "$snapshots" | while read id; do
-		umount -i "$snapdir/$id/m" 2>/dev/null
+		umount -i "$snapdir/$id/_" 2>/dev/null
 	done
 
 	# Cleanup leftover snapshot overlays not recorded in snapshots stack
 	if grep -q "^\S\+@\S\+ $snapdir/\S\+ overlay" /proc/mounts; then
-		umount -i "$snapdir"/*/m 2>/dev/null
+		umount -i "$snapdir"/*/_ 2>/dev/null
 	fi
 }
 
 umount_snapshots
-umount -i "$mnt"
-# Repeat in case mount.snapshot cleanup failed
-umount_snapshots
-# Unmount the shared snapshots dir
-umount -i "$snapdir"
+umount -i "$mntdir"

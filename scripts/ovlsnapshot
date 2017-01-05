@@ -72,8 +72,9 @@ parse_path_snapshot_arg()
 	# directory inside <path> to store snapshot related files
 	SNAPDIR=$MNT/@
 	# directory prefix for snapshot mount points
-	# snaphot mount points will be created as $SNAPMNT<snapshot-name>/m
-	SNAPMNT=$MNT/@/
+	# snaphot mount points will be created as $SNAPROOT/<snapshot-name>/_
+	SNAPROOT=$MNT/@
+	SNAPMNT=$SNAPROOT/_
 	# file to store snapshots stack
 	SNAPSHOTS="$SNAPDIR/.snapshots"
 
@@ -86,7 +87,7 @@ parse_path_snapshot_arg()
 	export MNT
 	S=$MNT@$snap
 	SNAPTEST="ovlsnaptest"
-	TESTDIR="$MNT/$SNAPTEST"
+	TESTDIR="$SNAPMNT/$SNAPTEST"
 }
 
 current_snapshot()
@@ -118,7 +119,7 @@ snapshot_in_stack()
 
 snapshot_is_deleted()
 {
-	[ ! -d $SNAPDIR/$1/m ]
+	[ ! -d $SNAPDIR/$1/_ ]
 }
 
 snapshot_exists()
@@ -140,7 +141,7 @@ create_snapshot()
 
 	mkdir -p $SNAPDIR/$s/u || exit 1
 	mkdir -p $SNAPDIR/$s/w || exit 1
-	mkdir -p $SNAPDIR/$s/m || exit 1
+	mkdir -p $SNAPDIR/$s/_ || exit 1
 	mknod $SNAPDIR/$s/u/@ c 0 0 || exit 1
 	echo $s >> $SNAPSHOTS || exit 1
 	sync
@@ -150,9 +151,9 @@ delete_snapshot()
 {
 	local s=$1
 
-	umount -i $SNAPDIR/$s/m 2>/dev/null
+	umount -i $SNAPDIR/$s/_ 2>/dev/null
 	rm -rf $SNAPDIR/$s/w || exit 1
-	rm -rf $SNAPDIR/$s/m || exit 1
+	rm -rf $SNAPDIR/$s/_ || exit 1
 	sync
 }
 
@@ -160,7 +161,7 @@ remove_snapshot()
 {
 	local s=$1
 
-	umount -i $SNAPDIR/$s/m 2>/dev/null
+	umount -i $SNAPDIR/$s/_ 2>/dev/null
 	rm -rf $SNAPDIR/$s || exit 1
 	grep -v "^$1$" $SNAPSHOTS > $SNAPSHOTS.tmp
 	sync
@@ -173,9 +174,9 @@ snapshot_is_mounted()
 	local s=$1
 
 	if [ -z "$s" ]; then
-		grep -q "^\S\+ $MNT snapshot" /proc/mounts
+		grep -q "^\S\+ $SNAPMNT snapshot" /proc/mounts
 	else
-		grep -q "^\S\+ $SNAPMNT$s/m overlay" /proc/mounts
+		grep -q "^\S\+ $SNAPROOT/$s/_ overlay" /proc/mounts
 	fi
 }
 
@@ -188,13 +189,14 @@ mount_snapshot()
 umount_snapshot()
 {
 	snapshot_is_mounted || return
-	umount $MNT || exit 1
+	umount $SNAPMNT || exit 1
 }
 
 remount_snapshot()
 {
+	snapshot_is_mounted || return
 	# remount with -osnapshot=$(current_snapshot)
-	mount -t snapshot snapshot $MNT -o remount || exit 1
+	mount $SNAPMNT -o remount || exit 1
 }
 
 umount_all_mounted_snapshots()
@@ -457,7 +459,7 @@ case "$CMD" in
 		d=$TESTDIR
 	else
 		echo "Files in snapshot $snap:"
-		d=$SNAPMNT$snap/m/$SNAPTEST
+		d=$SNAPROOT/$snap/_/$SNAPTEST
 	fi
 	if [ -d $d ] ; then
 		cd $d > /dev/null
@@ -571,7 +573,7 @@ case "$CMD" in
 		f=1
 		echo 'Restoring from snapshot' $f
 		rm -rf $TESTDIR/?
-		cp -R $SNAPMNT$f/m/$SNAPTEST/? $TESTDIR/
+		cp -R $SNAPROOT/$f/_/$SNAPTEST/? $TESTDIR/
 	  ;;
 	esac || exit 1
 	cd $TESTDIR > /dev/null

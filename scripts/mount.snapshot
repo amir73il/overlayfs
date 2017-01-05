@@ -1,14 +1,14 @@
 #!/bin/sh
 # mount.snapshot <dev> <mnt>
+# mount.snapshot <dev> <mnt>/@/_ -o remount
 #
 # Overlayfs snapshot mount helper
 #
 # - Check if snapshots stack exists at <mnt>/@/.snapshots
-# - Bind shared mount at <mnt>/@
-# - Mount snapshot mount at <mnt>
-# - Mount olds snapshots at <mnt>/@/<id>/m
+# - Mount (or remount) snapshot mount at <mnt>/@/_
+# - Mount snapshot overlays at <mnt>/@/<id>/_
 #
-# * If any mount flags other than -o rw are passed to helper,
+# * If any mount flags other than -o rw[,remount] are passed to helper,
 #   it passes the command as is without doing the above
 #
 #-----------------------------------------------------------------------
@@ -31,7 +31,7 @@
 #-----------------------------------------------------------------------
 #
 
-dev="$1"
+dev="${1%@*}"
 shift
 mnt="${1%/}"
 shift
@@ -44,38 +44,50 @@ error()
 	exit 1
 }
 
-# No support for mount options at the moment
-if [ -n "$1" -a "$1" != "-o" ]; then
-       error "invalid snapshot mount options '$*'"
-fi
-
-shift
-mntopts="$1"
-if [ -n "$mntopts" -a "$mntopts" != "rw" -a "$mntopts" != "rw,remount" ]; then
-	echo "$*" > /tmp/mount.snapshot.in
+mount_internal()
+{
+	echo "$dev $mnt -o $mntopts" > /tmp/mount.snapshot.in
 	exec mount -i -t snapshot "$dev" "$mnt" -o "$mntopts"
-fi
+}
 
 # Verify that overlayfs snapshot feature is enabled
 grep -wq 'overlay' /proc/filesystems || modprobe overlay
 grep -wq 'snapshot' /proc/filesystems || \
 	error "overlayfs snapshots feature not enabled."
 
-# Verify snapshot is not already mounted on child or parent path
-# because nesting is not allowed
-mounted=$(mount -t snapshot | while read d on m opt; do echo $m; done)
-for m in $mounted; do
-	if [ "$m" = "$mnt" ]; then
-		( echo "$mntopts" | grep -q remount ) || \
-			error "overlayfs snapshot already mounted at '$m'."
-	elif ( echo $m | grep -q "^$mnt" ) || ( echo $mnt | grep -q "^$m" ); then
-		error "overlapping overlayfs snapshot already mounted at '$m'."
-	fi
-done
+# Verify that we are being called as mount helper
+if [ -n "$1" -a "$1" != "-o" ]; then
+       error "invalid snapshot mount options '$*'"
+fi
 
-lower="$mnt"
-snapdir="$mnt/@"
-snapshots="$snapdir/.snapshots"
+shift
+mntopts="$1"
+shift
+
+if ( echo "$mntopts" | grep -q remount ) ; then
+	# Remount - parse <mnt> from <mnt>/_
+	mntdir="$mnt"
+	mnt="${mntdir%/@/_}"
+	[ "$mnt" != "$mntdir" ] || mount_internal
+	# helper does not parse mount options beyond rw,remount
+	# for mounting the current snapshot after snapshot take
+	mntopts="rw,remount"
+	# snapshot overlays do not support remount -
+	# they have to be umounted/mounted
+	umount -i "$mnt"/@/*/_ 2>/dev/null
+else
+	mntdir="$mnt/@/_"
+	# helper does not parse mount options beyond rw
+	[ -z "$mntopts" -o "$mntopts" = "rw" ] || mount_internal
+	# Verify snapshot is not already mounted on <mnt>/_
+	mount -t snapshot | while read d on m opt; do
+		[ "$m" != "$mntdir" -a "$m" != "$mnt" ] || \
+			error "overlayfs snapshot already mounted at '$m'."
+	done
+
+	mkdir -p "$mntdir" || \
+		error "failed mkdir '"$mntdir"' for overlayfs snapshot."
+fi
 
 # Disable redirect_dir because of rename issue with multiple snapshots:
 # https://github.com/amir73il/overlayfs/issues/1
@@ -83,11 +95,14 @@ mntopts="$mntopts,redirect_dir=off"
 snapmntopts="redirect_dir=off"
 oldsnapmntopts="redirect_dir=off"
 
+lower="$mnt"
+snapdir="$mnt/@"
+snapshots="$snapdir/.snapshots"
 [ ! -s "$snapshots" ] || id=$(tail -n 1 "$snapshots")
 
 if [ -z "$id" ]; then
 	# No current snapshot - mount pass through snapshot mount
-	exec mount -i -t snapshot "$dev" "$mnt" -o"upperdir=$lower,$mntopts"
+	exec mount -i -t snapshot "$dev@" "$mntdir" -o"upperdir=$lower,$mntopts"
 fi
 
 cd "$lower" || exit 1
@@ -96,19 +111,14 @@ cd "$lower" || exit 1
 current="@/$id"
 upper="$current/u"
 work="$current/w"
-snapmnt="$current/m"
+snapmnt="$current/_"
 
-tmpdir=/tmp/snapshot.$$
-tmpmnt="$tmpdir/$id/m"
 trap "_cleanup" 0 1 2 3 15
 _cleanup()
 {
 	err=$?
-	# Cleanup snapshot $id temp mounts
-	umount -i "$tmpmnt" 2>/dev/null
-	umount -i "$tmpdir" 2>/dev/null
-	umount -i "$snapdir" 2>/dev/null
-	rmdir $tmpdir 2>/dev/null
+	# Cleanup snapshot overlay mounts if snapshot mount failed
+	[ $err = 0 ] || umount -i "$snapdir"/*/_ 2>/dev/null
 	exit $err
 }
 
@@ -120,7 +130,7 @@ mount_old_snapshots()
 	tac "$snapshots" | while read old; do
 		[ "$old" != "$id" ] || continue
 		oldsnap="@/$old"
-		oldmnt="$oldsnap/m"
+		oldmnt="$oldsnap/_"
 		[ -d "$oldsnap" ] || continue
 		old_snapshots="$oldsnap/u:$old_snapshots"
 		[ -d "$oldmnt" ] || continue
@@ -137,20 +147,16 @@ mount_old_snapshots()
 [ -c "$upper/@" ] || \
 	error "missing whiteout of snapshot '$current' directories."
 
-# Make shared mount clone of the real lower mount
-mount --bind "$snapdir" "$snapdir" || exit 1
-mount --make-shared "$snapdir" || exit 1
-mkdir -p "$tmpdir" || exit 1
-mount --bind "$snapdir" "$tmpdir" || exit 1
-
-# Mount the current snapshot overlay and snapshot mount
+# Mount the current snapshot overlay
 mount -i -t overlay "$dev@$id" "$snapmnt" \
 	-o"lowerdir=$lower,upperdir=$upper,workdir=$work,$snapmntopts" || exit 1
-mount -i -t snapshot "$dev@$id" "$mnt" \
+
+# Mount older snapshot overlays
+mount_old_snapshots
+
+# Mount the snapshot mount
+mount -i -t snapshot "$dev@" "$mntdir" \
 	-o"upperdir=$lower,snapshot=$snapmnt,$mntopts" || exit 1
 
-# Bind the (now covered) current snapshot overlay above the snapshot mount
-mount --bind -r "$tmpmnt" "$mnt/$snapmnt" || exit 1
-
-# Mount older snapshots
-mount_old_snapshots
+# Remount current snapshot overlay read-only
+mount -o remount,ro "$snapmnt" || exit 1
