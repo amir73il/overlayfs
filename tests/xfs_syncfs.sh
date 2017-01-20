@@ -3,12 +3,20 @@
 [ -d "$1" ] || exit 1
 cd "$1" || exit 1
 
-SYNCFS=`which syncfs`
-[ -n "$SYNCFS" ] || SYNCFS="sync -f"
+# prefer xfs_io
+if xfs_io -c help 2>/dev/null | grep fsync; then
+	FSYNC="xfs_io -c fsync"
+fi
+if xfs_io -c help 2>/dev/null | grep syncfs; then
+	SYNCFS="xfs_io -c syncfs"
+fi
 
-FSYNC="sync"
-XFS_IO=`which xfs_io`
-[ -z "$XFS_IO" ] || FSYNC="xfs_io -x -c fsync"
+# second best syncfs tool
+[ -n "$SYNCFS" ] || SYNCFS=`which syncfs`
+
+# fall back to sync tool
+[ -n "$SYNCFS" ] || SYNCFS="sync -f"
+[ -n "$FSYNC" ] || FSYNC="sync"
 
 xfs_sync_stats()
 {
