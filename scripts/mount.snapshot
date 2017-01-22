@@ -160,3 +160,7 @@ mount -i -t snapshot "$dev@" "$mntdir" \
 
 # Remount current snapshot overlay read-only
 mount -o remount,ro "$snapmnt" || exit 1
+
+# freeze/thaw to activate new snapshot
+fsfreeze -f "$mntdir" || exit 1
+fsfreeze -u "$mntdir" || exit 1
