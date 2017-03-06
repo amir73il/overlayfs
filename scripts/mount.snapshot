@@ -91,9 +91,7 @@ fi
 
 # Disable redirect_dir because of rename issue with multiple snapshots:
 # https://github.com/amir73il/overlayfs/issues/1
-mntopts="$mntopts,redirect_dir=off"
-snapmntopts="redirect_dir=off"
-oldsnapmntopts="redirect_dir=off"
+#mntopts="$mntopts,redirect_dir=off"
 
 lower="$mnt"
 snapdir="$mnt/@"
