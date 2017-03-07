@@ -40,8 +40,8 @@ usage()
 	echo "usage: $SCRIPT_NAME version"
 	echo
 	echo "$FSTYPE snapshot commands:"
-	echo "usage: $SCRIPT_NAME {mount|status} <path>"
-	echo "usage: $SCRIPT_NAME {umount|list} [<path>|-a]"
+	echo "usage: $SCRIPT_NAME {status|list}  [<path>|-a]"
+	echo "usage: $SCRIPT_NAME {umount|mount} [<path>|-a]"
 	echo "usage: $SCRIPT_NAME {create|take}  <path>[[/]@[/]<snapshot-name>] (default-name=<date.time>)"
 	echo "usage: $SCRIPT_NAME {delete|remove} <path>[/]@[/]<snapshot-name>"
 	echo
@@ -78,8 +78,9 @@ parse_path_snapshot_arg()
 	# file to store snapshots stack
 	SNAPSHOTS="$SNAPDIR/.snapshots"
 
-	# list and umount commands can take -a instead of <path> argument
-	if [ "$CMD" = list -o "$CMD" = umount ] && [ "$MNT" = "-a" ]; then
+	# list|status and mount|umount commands can take -a instead of <path> argument
+	if [ "$CMD" = list -o "$CMD" = status -o "$CMD" = mount -o "$CMD" = umount ] && \
+		[ "$MNT" = "-a" ]; then
 		return
 	fi
 	[ -n "$MNT" ] || usage
@@ -253,6 +254,17 @@ list_all_mounted_snapshots()
 	done )
 }
 
+show_all_mounted_snapshots()
+{
+	mount -t snapshot | ( while read dev on path opt; do
+		echo "$dev on $path $opt"
+		echo "\\"
+		path="${path%_}"
+		mount | grep " on $path.*/_ type"
+		echo .
+	done )
+}
+
 snapshot_status()
 {
 	if ! snapshot_exists ; then
@@ -299,19 +311,10 @@ esac
 # Snapshot commands that take <path>[@<snapshot>] argument
 [ "$2" = help ] || parse_path_snapshot_arg "$2"
 case "$CMD" in
-  status)
-	if [ "$2" = help ]; then
-		echo "status: display status of $FSTYPE snapshot mount at <path>."
-		echo "usage: $SCRIPT_NAME status <path>"
-		exit 0
-	fi
-	snapshot_status
-	echo .
-	;;
-  list)
+  status|list)
 	if [ "$2" = help ]; then
 		echo "list: display list and status of $FSTYPE snapshots."
-		echo "usage: $SCRIPT_NAME list [<path>|-a]"
+		echo "usage: $SCRIPT_NAME {status|list} [<path>|-a]"
 		echo
 		echo "run '$SCRIPT_NAME list <path>' to list $FSTYPE snapshots at <path>"
 		echo "run '$SCRIPT_NAME list -a' to list all mounted $FSTYPE snapshots"
@@ -404,7 +407,14 @@ case "$CMD" in
   mount)
 	if [ "$2" = help ]; then
 		echo "mount: mount all $FSTYPE snapshots at <path>."
-		echo "usage: $SCRIPT_NAME mount <path>"
+		echo "usage: $SCRIPT_NAME mount [<path>|-a]"
+		echo
+		echo "run '$SCRIPT_NAME mount -a' to show all mounted $FSTYPE snapshots"
+		exit 0
+	fi
+	if [ "$MNT" = "-a" ]; then
+		# show all snapshot mounts and overlays
+		show_all_mounted_snapshots
 		exit 0
 	fi
 	S=$MNT@$(current_snapshot)
@@ -418,7 +428,9 @@ case "$CMD" in
   umount)
 	if [ "$2" = help ]; then
 		echo "umount: unmount all $FSTYPE snapshots at <path>."
-		echo "usage: $SCRIPT_NAME umount <path>"
+		echo "usage: $SCRIPT_NAME umount [<path>|-a]"
+		echo
+		echo "run '$SCRIPT_NAME umount -a' to unmount all mounted $FSTYPE snapshots"
 		exit 0
 	fi
 	if [ "$MNT" = "-a" ]; then
