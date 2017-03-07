@@ -93,6 +93,9 @@ fi
 # https://github.com/amir73il/overlayfs/issues/1
 #mntopts="$mntopts,redirect_dir=off"
 
+# Avoid copy up on read access
+mntopts="$mntopts,noatime"
+
 lower="$mnt"
 snapdir="$mnt/@"
 snapshots="$snapdir/.snapshots"
