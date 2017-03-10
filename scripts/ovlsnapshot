@@ -44,6 +44,7 @@ usage()
 	echo "usage: $SCRIPT_NAME {umount|mount} [<path>|-a]"
 	echo "usage: $SCRIPT_NAME {create|take}  <path>[[/]@[/]<snapshot-name>] (default-name=<date.time>)"
 	echo "usage: $SCRIPT_NAME {delete|remove} <path>[/]@[/]<snapshot-name>"
+	echo "usage: $SCRIPT_NAME {clean}         <path>"
 	echo
 	echo "snapshot command parameter may be given in ZFS style <path>@<snapshot-name>"
         echo "and it may be given as the snapshot directory path <path>/@/<snapshot-name>."
@@ -167,6 +168,17 @@ remove_snapshot()
 	grep -v "^$1$" $SNAPSHOTS > $SNAPSHOTS.tmp
 	sync
 	mv $SNAPSHOTS.tmp $SNAPSHOTS
+	sync
+}
+
+remove_all_snapshots()
+{
+	umount -i $SNAPDIR/*/_ 2>/dev/null
+	for s in `cat $SNAPSHOTS`; do
+		rm -rf $SNAPDIR/$s || exit 1
+		echo "snapshot $MNT@$s was removed"
+	done
+	rm $SNAPSHOTS
 	sync
 }
 
@@ -399,6 +411,23 @@ case "$CMD" in
 	remove_snapshot $snap
 	remount_snapshot
 	echo "snapshot $S was removed"
+	echo .
+	;;
+  clean)
+	if [ "$2" = help ]; then
+		echo "clean: remove all snapshots."
+		echo "usage: $SCRIPT_NAME clean <path>"
+		exit 0
+	fi
+	[ -z "$snap" ] || usage
+	if ! snapshot_exists ; then
+		echo "No $FSTYPE snapshots at '$MNT'."
+		exit 0
+	fi
+
+	remove_all_snapshots
+	remount_snapshot
+	echo "all snapshots at '$MNT' removed"
 	echo .
 	;;
 
