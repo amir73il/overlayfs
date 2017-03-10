@@ -389,9 +389,6 @@ case "$CMD" in
 		exit 0
 	fi
 	[ -n "$snap" ] || usage
-	if snapshot_is_mounted; then
-		error "cannot remove snapshot while snapshots are mounted!"
-	fi
 	if ! snapshot_exists $snap ; then
 		error "snapshot $S doesn't exist!"
 	fi
@@ -400,6 +397,7 @@ case "$CMD" in
 	fi
 
 	remove_snapshot $snap
+	remount_snapshot
 	echo "snapshot $S was removed"
 	echo .
 	;;

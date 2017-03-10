@@ -50,6 +50,13 @@ mount_internal()
 	exec mount -i -t snapshot "$dev" "$mnt" -o "$mntopts"
 }
 
+freeze_thaw()
+{
+	[ "$REMOUNT" = true ] || return
+	fsfreeze -f "$mntdir" || exit 1
+	fsfreeze -u "$mntdir" || exit 1
+}
+
 # Verify that overlayfs snapshot feature is enabled
 grep -wq 'overlay' /proc/filesystems || modprobe overlay
 grep -wq 'snapshot' /proc/filesystems || \
@@ -64,7 +71,12 @@ shift
 mntopts="$1"
 shift
 
+REMOUNT=false
 if ( echo "$mntopts" | grep -q remount ) ; then
+	REMOUNT=true
+fi
+
+if $REMOUNT; then
 	# Remount - parse <mnt> from <mnt>/_
 	mntdir="$mnt"
 	mnt="${mntdir%/@/_}"
@@ -102,8 +114,12 @@ snapshots="$snapdir/.snapshots"
 [ ! -s "$snapshots" ] || id=$(tail -n 1 "$snapshots")
 
 if [ -z "$id" ]; then
-	# No current snapshot - mount pass through snapshot mount
-	exec mount -i -t snapshot "$dev@" "$mntdir" -o"upperdir=$lower,$mntopts"
+	# No current snapshot - mount nosnapshot and exit
+	mount -i -t snapshot "$dev@" "$mntdir" \
+		-o"upperdir=$lower,nosnapshot,$mntopts" || exit 1
+	# freeze/thaw to deactivate old snapshot
+	freeze_thaw
+	exit 0
 fi
 
 cd "$lower" || exit 1
@@ -163,5 +179,4 @@ mount -i -t snapshot "$dev@" "$mntdir" \
 mount -o remount,ro "$snapmnt" || exit 1
 
 # freeze/thaw to activate new snapshot
-fsfreeze -f "$mntdir" || exit 1
-fsfreeze -u "$mntdir" || exit 1
+freeze_thaw
