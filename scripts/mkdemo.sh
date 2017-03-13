@@ -5,8 +5,8 @@
 
 DEMO=/demo
 # re-packed zip from http://opengameart.org/sites/default/files/Playing%20Cards.zip
-CARDS_TARBALL=~/Downloads/PlayingCards.tgz
-CARDS=$DEMO/PlayingCards
+CARDS_TARBALL=~/Downloads/Cards.tgz
+CARDS=$DEMO/Cards
 MDIRS=$DEMO/1Mdirs
 SECRET=Passwords.txt
 USER=amir
