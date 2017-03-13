@@ -52,7 +52,7 @@ mount_internal()
 
 freeze_thaw()
 {
-	[ "$REMOUNT" = true ] || return
+	[ "$REMOUNT" = true ] || return 0
 	fsfreeze -f "$mntdir" || exit 1
 	fsfreeze -u "$mntdir" || exit 1
 }
