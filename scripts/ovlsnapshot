@@ -196,7 +196,7 @@ snapshot_is_mounted()
 mount_snapshot()
 {
 	! snapshot_is_mounted || return
-	mount -t snapshot snapshot $MNT || exit 1
+	mount -t snapshot $MNT $MNT || exit 1
 }
 
 umount_snapshot()
