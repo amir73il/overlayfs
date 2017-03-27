@@ -168,15 +168,15 @@ mount_old_snapshots()
 mount -i -t overlay "$dev@$id" "$snapmnt" \
 	-o"lowerdir=$lower,upperdir=$upper,workdir=$work,$snapmntopts" || exit 1
 
-# Mount older snapshot overlays
-mount_old_snapshots
-
 # Mount the snapshot mount
 mount -i -t snapshot "$dev@" "$mntdir" \
 	-o"upperdir=$lower,snapshot=$snapmnt,$mntopts" || exit 1
 
 # Remount current snapshot overlay read-only
 mount -o remount,ro "$snapmnt" || exit 1
+
+# Mount older snapshot overlays
+mount_old_snapshots
 
 # freeze/thaw to activate new snapshot
 freeze_thaw
