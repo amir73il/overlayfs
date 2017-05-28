@@ -174,11 +174,18 @@ remove_snapshot()
 remove_all_snapshots()
 {
 	umount -i $SNAPDIR/*/_ 2>/dev/null
-	for s in `cat $SNAPSHOTS`; do
+
+	[ ! -s $SNAPSHOTS ] || mv $SNAPSHOTS $SNAPSHOTS.clean
+
+	# Remount snapshot mount '-o nosnapshot' so we can cleanup
+	remount_snapshot
+
+	[ -e $SNAPSHOTS.clean ] || return
+	for s in `cat $SNAPSHOTS.clean`; do
 		rm -rf $SNAPDIR/$s || exit 1
 		echo "snapshot $MNT@$s was removed"
 	done
-	rm $SNAPSHOTS
+	rm $SNAPSHOTS.clean
 	sync
 }
 
@@ -426,7 +433,6 @@ case "$CMD" in
 	fi
 
 	remove_all_snapshots
-	remount_snapshot
 	echo "all snapshots at '$MNT' removed"
 	echo .
 	;;
