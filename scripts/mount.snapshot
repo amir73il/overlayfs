@@ -107,6 +107,8 @@ fi
 
 # Avoid copy up on read access
 mntopts="$mntopts,noatime"
+snapmntopts="noatime,nfs_export=on,redirect_dir=origin"
+oldsnapmntopts="noatime"
 
 lower="$mnt"
 snapdir="$mnt/@"
