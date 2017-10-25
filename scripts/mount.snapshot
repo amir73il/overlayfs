@@ -144,6 +144,7 @@ _cleanup()
 mount_old_snapshots()
 {
 	local old_snapshots=$snapmnt
+	local prev=""
 
 	# mount snapshots from newest to oldest
 	tac "$snapshots" | while read old; do
@@ -151,10 +152,15 @@ mount_old_snapshots()
 		oldsnap="@/$old"
 		oldmnt="$oldsnap/_"
 		[ -d "$oldsnap" ] || continue
-		old_snapshots="$oldsnap/u:$old_snapshots"
 		[ -d "$oldmnt" ] || continue
-		mount -i -t overlay "$dev@$old" "$oldmnt" \
+		[ -n "$prev" ] || \
+			mount -i -t overlay "$dev@$old" "$oldmnt" \
+			-o"ro,upperdir=$oldsnap/u,workdir=$oldsnap/w,lowerdir=$old_snapshots,$snapmntopts"
+		old_snapshots="$oldsnap/u:$old_snapshots"
+		[ -z "$prev" ] || \
+			mount -i -t overlay "$dev@$old" "$oldmnt" \
 			-o"ro,lowerdir=$old_snapshots,$oldsnapmntopts"
+		prev=$old
 	done
 }
 
@@ -177,8 +183,8 @@ mount -i -t snapshot "$dev@" "$mntdir" \
 # Remount current snapshot overlay read-only
 mount -o remount,ro "$snapmnt" || exit 1
 
-# Mount older snapshot overlays
-mount_old_snapshots
-
 # freeze/thaw to activate new snapshot
 freeze_thaw
+
+# Mount older snapshot overlays
+mount_old_snapshots
