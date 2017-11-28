@@ -23,11 +23,13 @@ xfs_sync_stats()
 	echo $1
 	echo -n "xfs_log_force = "
 	grep log /proc/fs/xfs/stat  | awk '{ print $5 }'
+	! test -f x || filefrag -e x | grep delalloc
 }
 
-xfs_sync_stats "before touch"
-touch x
-xfs_sync_stats "after touch"
+rm x
+xfs_sync_stats "before write"
+echo 123 > x
+xfs_sync_stats "after write"
 $SYNCFS .
 xfs_sync_stats "after syncfs"
 $FSYNC x
