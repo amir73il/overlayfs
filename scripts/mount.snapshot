@@ -107,7 +107,7 @@ fi
 
 # Avoid copy up on read access
 mntopts="$mntopts,noatime"
-snapmntopts="noatime,nfs_export=on,redirect_dir=origin"
+snapmntopts="noatime,index=on,nfs_export=on,redirect_dir=origin"
 oldsnapmntopts="noatime"
 
 lower="$mnt"
@@ -153,9 +153,15 @@ mount_old_snapshots()
 		oldmnt="$oldsnap/_"
 		[ -d "$oldsnap" ] || continue
 		[ -d "$oldmnt" ] || continue
-		[ -n "$prev" ] || \
+		if [ -z "$prev" ]; then
+			# Before merging prev snapshot upper with a new lower
+			# (curr snapshot), we need to remove the "origin" xattr
+			# of old $lower, otherwise mount will fail (-ESTALE)
+			setfattr -x "trusted.overlay.origin" $oldsnap/u
+
 			mount -i -t overlay "$dev@$old" "$oldmnt" \
 			-o"ro,upperdir=$oldsnap/u,workdir=$oldsnap/w,lowerdir=$old_snapshots,$snapmntopts"
+		fi
 		old_snapshots="$oldsnap/u:$old_snapshots"
 		[ -z "$prev" ] || \
 			mount -i -t overlay "$dev@$old" "$oldmnt" \
