@@ -158,7 +158,9 @@ mount_old_snapshots()
 			# (curr snapshot), we need to remove the "origin" xattr
 			# of old $lower, otherwise mount will fail (-ESTALE)
 			setfattr -x "trusted.overlay.origin" $oldsnap/u
-
+			# ...and mount with nfs_export=nested, otherwise merge
+			# dir origin fh verification will fail
+                        snapmntopts="$snapmntopts,nfs_export=nested"
 			mount -i -t overlay "$dev@$old" "$oldmnt" \
 			-o"ro,upperdir=$oldsnap/u,workdir=$oldsnap/w,lowerdir=$old_snapshots,$snapmntopts"
 		fi
