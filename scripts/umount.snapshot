@@ -1,4 +1,5 @@
 #!/bin/sh
+# umount.snapshot <mnt>
 # umount.snapshot <mnt>/@/_
 #
 # Overlayfs snapshot umount helper
@@ -6,9 +7,12 @@
 # - Unmount snapshot overlays <mnt>/@/*/_
 # - Unmount snapshot mount at <mnt>/@/_
 #
+# * If mount point does not end with /@/_, pass the command as is
+#   without doing the above
+#
 #-----------------------------------------------------------------------
 #
-# Copyright (C) 2016 CTERA Networks. All Rights Reserved.
+# Copyright (C) 2016-2018 CTERA Networks. All Rights Reserved.
 # Author: Amir Goldstein <amir73il@gmail.com>
 #
 # This program is free software; you can redistribute it and/or
@@ -30,18 +34,14 @@ mnt="${1%/}"
 
 [ -d "$mnt" ] || exit 1
 
+# Try to parse <mnt> from <mnt>/@/_
 mntdir="$mnt"
 mnt="${mntdir%/@/_}"
 
-# umount.snapshot helper should not take care of mounts
-# not created by mount.snapshot helper. Use the <dev>@*
-# dev argument as indication to helper aided snapshot mount.
-# If this is an unfamiliar snapshot mount - bypass helper.
-if [ "$mnt" = "$mntdir" ] || \
-	! grep -q "^\S\+@.* $mntdir snapshot" /proc/mounts; then
+# If mount point doesn't end with /@/_ bypass helper.
+if [ "$mnt" = "$mntdir" ]; then
 	echo "$*" > /tmp/umount.snapshot.in
-	umount -i $*
-	exit $?
+	exec umount -i $*
 fi
 
 snapdir="$mnt/@"

@@ -1,5 +1,6 @@
 #!/bin/sh
-# mount.snapshot <dev> <mnt>
+# mount.snapshot <dev> <mnt> [-o <opt>]
+# mount.snapshot <dev> <mnt>/@/_
 # mount.snapshot <dev> <mnt>/@/_ -o remount
 #
 # Overlayfs snapshot mount helper
@@ -13,7 +14,7 @@
 #
 #-----------------------------------------------------------------------
 #
-# Copyright (C) 2016 CTERA Networks. All Rights Reserved.
+# Copyright (C) 2016-2018 CTERA Networks. All Rights Reserved.
 # Author: Amir Goldstein <amir73il@gmail.com>
 #
 # This program is free software; you can redistribute it and/or
@@ -76,11 +77,12 @@ if ( echo "$mntopts" | grep -q remount ) ; then
 	REMOUNT=true
 fi
 
+# Try to parse <mnt> from <mnt>/@/_
+mntdir="$mnt"
+mnt="${mntdir%/@/_}"
+[ "$mnt" != "$mntdir" ] || mount_internal
+
 if $REMOUNT; then
-	# Remount - parse <mnt> from <mnt>/_
-	mntdir="$mnt"
-	mnt="${mntdir%/@/_}"
-	[ "$mnt" != "$mntdir" ] || mount_internal
 	# helper does not parse mount options beyond rw,remount
 	# for mounting the current snapshot after snapshot take
 	mntopts="rw,remount"
@@ -88,10 +90,7 @@ if $REMOUNT; then
 	# they have to be umounted/mounted
 	umount -i "$mnt"/@/*/_ 2>/dev/null
 else
-	mntdir="$mnt/@/_"
-	# helper does not parse mount options beyond rw
-	[ -z "$mntopts" -o "$mntopts" = "rw" ] || mount_internal
-	# Verify snapshot is not already mounted on <mnt>/_
+	# Verify snapshot is not already mounted on <mnt>/@/_
 	mount -t snapshot | while read d on m opt; do
 		[ "$m" != "$mntdir" -a "$m" != "$mnt" ] || \
 			error "overlayfs snapshot already mounted at '$m'."
@@ -100,10 +99,6 @@ else
 	mkdir -p "$mntdir" || \
 		error "failed mkdir '"$mntdir"' for overlayfs snapshot."
 fi
-
-# Disable redirect_dir because of rename issue with multiple snapshots:
-# https://github.com/amir73il/overlayfs/issues/1
-#mntopts="$mntopts,redirect_dir=off"
 
 # Avoid copy up on read access
 mntopts="$mntopts,noatime"
@@ -117,8 +112,8 @@ snapshots="$snapdir/.snapshots"
 
 if [ -z "$id" ]; then
 	# No current snapshot - mount nosnapshot and exit
-	mount -i -t snapshot "$dev@" "$mntdir" \
-		-o"upperdir=$lower,nosnapshot,$mntopts" || exit 1
+	mount -i -t snapshot "$lower" "$mntdir" \
+		-o"nosnapshot,$mntopts" || exit 1
 	# freeze/thaw to deactivate old snapshot
 	freeze_thaw
 	exit 0
@@ -185,8 +180,8 @@ mount -i -t overlay "$dev@$id" "$snapmnt" \
 	-o"lowerdir=$lower,upperdir=$upper,workdir=$work,$snapmntopts" || exit 1
 
 # Mount the snapshot mount
-mount -i -t snapshot "$dev@" "$mntdir" \
-	-o"upperdir=$lower,snapshot=$snapmnt,$mntopts" || exit 1
+mount -i -t snapshot "$lower" "$mntdir" \
+	-o"snapshot=$snapmnt,$mntopts" || exit 1
 
 # Remount current snapshot overlay read-only
 mount -o remount,ro "$snapmnt" || exit 1
