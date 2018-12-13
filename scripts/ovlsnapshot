@@ -38,6 +38,7 @@ usage()
 	version
 	echo "usage: $SCRIPT_NAME help [cmd]"
 	echo "usage: $SCRIPT_NAME version"
+	echo "usage: $SCRIPT_NAME debug"
 	echo
 	echo "$FSTYPE snapshot commands:"
 	echo "usage: $SCRIPT_NAME {status|list}  [<path>|-a]"
@@ -60,6 +61,15 @@ error()
 {
 	echo "$SCRIPT_NAME: $CMD: $1" >&2
 	exit 1
+}
+
+debug()
+{
+	set -- $(mount -t debugfs)
+	[ $# -ne 0 ] || error "debugfs not mounted?"
+	local dd="$3/dynamic_debug/control"
+	[ -f $dd ] || error "CONFIG_DYNAMIC_DEBUG not enabled in kernel?"
+	echo "file fs/overlayfs/snapshot.c  +p" > $dd
 }
 
 # parse <path>[[/]@[/]<snapshot-name>] argument
@@ -324,6 +334,15 @@ case "$CMD" in
 		exit 0
 	fi
 	version
+	exit 0
+	;;
+  debug)
+	if [ "$2" = help ]; then
+		echo "debug: enable kernel debug prints."
+		exit 0
+	fi
+	debug
+	exit 0
 	;;
 esac
 
