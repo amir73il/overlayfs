@@ -27,6 +27,48 @@ SCRIPT_VER=0.1
 FSTYPE=overlay
 SCRIPT_DESC="$FSTYPE snapshot management script"
 CMD="$1"
+ARGS="$*"
+
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+ORANGE='\033[1;33m'
+BLUE='\033[1;34m'
+NC='\033[0m' # No Color
+ABORTED="${RED}ABORTED${NC}"
+ERROR="${RED}ERROR:${NC}"
+WARN="${ORANGE}WARN:${NC}"
+INFO="${BLUE}INFO:${NC}"
+OK="${GREEN}OK${NC}"
+
+trap "abort" 0 1 2 3 15
+abort()
+{
+	rc=$?
+	[ $rc != 0 ] || return
+	echo "$SCRIPT_NAME $ARGS: $ABORTED"
+	exit $rc
+}
+
+ok()
+{
+	echo "$SCRIPT_NAME $ARGS: $OK"
+}
+
+error()
+{
+	echo "$SCRIPT_NAME: $CMD: $ERROR $1" >&2
+	exit 1
+}
+
+warn()
+{
+	echo "$SCRIPT_NAME: $CMD: $WARN $1"
+}
+
+info()
+{
+	echo "$SCRIPT_NAME: $CMD: $INFO $1"
+}
 
 version()
 {
@@ -54,13 +96,7 @@ usage()
 	echo "$FSTYPE snapshot test commands:"
 	echo "usage: $SCRIPT_NAME {test|tests} <path> [test-number] [file-size-mb]"
 	echo
-	exit 1
-}
-
-error()
-{
-	echo "$SCRIPT_NAME: $CMD: $1" >&2
-	exit 1
+	exit $1
 }
 
 debug()
@@ -94,7 +130,7 @@ parse_path_snapshot_arg()
 		[ "$MNT" = "-a" ]; then
 		return
 	fi
-	[ -n "$MNT" ] || usage
+	[ -n "$MNT" ] || usage 1
 	[ -d "$MNT" ] || error "'$MNT' is not a directory!"
 	export MNT
 	S=$MNT@$snap
@@ -297,15 +333,15 @@ show_all_mounted_snapshots()
 snapshot_status()
 {
 	if ! snapshot_exists ; then
-		echo "No $FSTYPE snapshots at '$MNT'."
+		info "No $FSTYPE snapshots at '$MNT'."
 		return 1
 	fi
 
 	S=$MNT@$(current_snapshot)
 	if snapshot_is_mounted ; then
-		echo "$FSTYPE snapshot $S is mounted."
+		info "$FSTYPE snapshot $S is mounted."
 	else
-		echo "$FSTYPE snapshot $S is not mounted."
+		info "$FSTYPE snapshot $S is not mounted."
 	fi
 
 	echo
@@ -321,10 +357,9 @@ snapshot_status()
 }
 
 # Global commands that take no <path>[@<snapshot>] argument
-[ -n "$CMD" ] || usage
 case "$CMD" in
-  help)
-	[ -n "$2" ] || usage
+  ''|help)
+	[ -n "$2" ] || usage 0
 	# help <cmd> => <cmd> help
 	exec "$0" "$2" help
 	;;
@@ -341,7 +376,7 @@ case "$CMD" in
 		echo "debug: enable kernel debug prints."
 		exit 0
 	fi
-	debug
+	debug && ok
 	exit 0
 	;;
 esac
@@ -392,7 +427,7 @@ case "$CMD" in
 	# For now new snapshot requires umount/mount of all snapshots
 	create_snapshot $snap
 	remount_snapshot
-	echo "snapshot $S was created"
+	info "snapshot $S was created"
 	echo .
 	;;
   delete)
@@ -403,7 +438,7 @@ case "$CMD" in
 		echo "usage: $SCRIPT_NAME delete <path>[/]@[/]<snapshot-name>"
 		exit 0
 	fi
-	[ -n "$snap" ] || usage
+	[ -n "$snap" ] || usage 1
 	if snapshot_is_deleted $snap ; then
 		error "snapshot $S already deleted!"
 	fi
@@ -415,7 +450,7 @@ case "$CMD" in
 	fi
 
 	delete_snapshot $snap
-	echo "snapshot $S was deleted"
+	info "snapshot $S was deleted"
 	echo .
 	;;
   remove)
@@ -426,7 +461,7 @@ case "$CMD" in
 		echo "usage: $SCRIPT_NAME remove <path>[/]@[/]<snapshot-name>"
 		exit 0
 	fi
-	[ -n "$snap" ] || usage
+	[ -n "$snap" ] || usage 1
 	if ! snapshot_exists $snap ; then
 		error "snapshot $S doesn't exist!"
 	fi
@@ -436,7 +471,7 @@ case "$CMD" in
 
 	remove_snapshot $snap
 	remount_snapshot
-	echo "snapshot $S was removed"
+	info "snapshot $S was removed"
 	echo .
 	;;
   clean)
@@ -445,14 +480,14 @@ case "$CMD" in
 		echo "usage: $SCRIPT_NAME clean <path>"
 		exit 0
 	fi
-	[ -z "$snap" ] || usage
+	[ -z "$snap" ] || usage 1
 	if ! snapshot_exists ; then
 		echo "No $FSTYPE snapshots at '$MNT'."
 		exit 0
 	fi
 
 	remove_all_snapshots
-	echo "all snapshots at '$MNT' removed"
+	info "all snapshots at '$MNT' removed"
 	echo .
 	;;
 
@@ -474,7 +509,7 @@ case "$CMD" in
 		error "snapshot $S is already mounted!"
 	fi
 	mount_snapshot
-	echo "snapshot $S was mounted"
+	info "snapshot $S was mounted"
 	echo .
 	;;
   umount)
@@ -495,7 +530,7 @@ case "$CMD" in
 		error "snapshot $S is not mounted!"
 	fi
 	umount_snapshot
-	echo "snapshot $S was unmounted"
+	info "snapshot $S was unmounted"
 	echo .
 	;;
 
@@ -530,7 +565,7 @@ case "$CMD" in
 		grep -v xxx ?/* 2>/dev/null
 		echo .
 		if [ -s md5list ]; then
-			md5sum -c md5list || exit 1
+			md5sum -c md5list || error "wrong checksum in snapshot"
 		fi
 		cd - > /dev/null
 		echo .
@@ -557,6 +592,8 @@ case "$CMD" in
 	for n in $( seq 1 $N ) ; do
 		$0 lstest $SNAPDIR/$n
 	done
+	ok
+	echo .
 	;;
   test)
 	if [ "$2" = help ]; then
@@ -607,7 +644,7 @@ case "$CMD" in
 	s=$n
 	$0 take $SNAPDIR/$s || exit 1
 	case "$n" in
-  	  1)
+	  1)
 		echo Create test:
 		echo ------------
 		echo 'Creating d.txt'
@@ -647,10 +684,12 @@ case "$CMD" in
 	$0 lstest $MNT || exit 1
 	$0 lstest $SNAPDIR/$s || exit 1
 	$0 list $MNT
+	ok
+	echo .
 	;;
 
   *)
-	usage
+	usage 1
 esac
 
 exit 0
