@@ -112,11 +112,10 @@ debug()
 # parse <path>[[/]@[/]<snapshot-name>] argument
 parse_path_snapshot_arg()
 {
-	MNT=$( echo $1 | ( IFS=$IFS@ ; read a b ; echo $a ) )
-	snap=$( echo $1 | ( IFS=$IFS@ ; read a b ; echo $b ) )
+	set -- $( IFS=@; echo $1 )
 	# strip / from <path>/ and /<snapshot-name>
-	MNT=${MNT%/}
-	snap=${snap#/}
+	MNT=${1%/}
+	snap=${2#/}
 	# directory inside <path> to store snapshot related files
 	SNAPDIR=$MNT/@
 	# directory prefix for snapshot mount points
@@ -133,6 +132,7 @@ parse_path_snapshot_arg()
 	fi
 	[ -n "$MNT" ] || usage 1
 	[ -d "$MNT" ] || error "'$MNT' is not a directory!"
+	mkdir -p $SNAPMNT || error "creating snapshot mount point"
 	export MNT
 	S=$MNT@$snap
 	SNAPTEST="ovlsnaptest"
@@ -660,7 +660,7 @@ case "$CMD" in
 	# uncomment the following line to run in-place write tests
 	INPLACE=$NOTRUNC
 	# uncomment the following line to run direct I/O write tests
-	DIRECT="oflag=direct"
+	#DIRECT="oflag=direct"
 	TRUNCSIZE=4
 	echo Appending $F zeros to $F.1 $DIRECT
 	# append writes to new allocated blocks

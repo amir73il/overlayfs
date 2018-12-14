@@ -152,17 +152,18 @@ mount_old_snapshots()
 			# Before merging prev snapshot upper with a new lower
 			# (curr snapshot), we need to remove the "origin" xattr
 			# of old $lower, otherwise mount will fail (-ESTALE)
-			setfattr -x "trusted.overlay.origin" $oldsnap/u
+			setfattr -x "trusted.overlay.origin" $oldsnap/u || \
+				error "failed removing 'origin' xattr"
 			# ...and mount with nfs_export=nested, otherwise merge
 			# dir origin fh verification will fail
                         snapmntopts="$snapmntopts,nfs_export=nested"
 			mount -i -t overlay "$dev@$old" "$oldmnt" \
-			-o"ro,upperdir=$oldsnap/u,workdir=$oldsnap/w,lowerdir=$old_snapshots,$snapmntopts"
+			-o"ro,upperdir=$oldsnap/u,workdir=$oldsnap/w,lowerdir=$old_snapshots,$snapmntopts" || exit 1
 		fi
 		old_snapshots="$oldsnap/u:$old_snapshots"
 		[ -z "$prev" ] || \
 			mount -i -t overlay "$dev@$old" "$oldmnt" \
-			-o"ro,lowerdir=$old_snapshots,$oldsnapmntopts"
+			-o"ro,lowerdir=$old_snapshots,$oldsnapmntopts" || exit 1
 		prev=$old
 	done
 }
