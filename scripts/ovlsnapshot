@@ -95,6 +95,7 @@ usage()
 	echo
 	echo "$FSTYPE snapshot test commands:"
 	echo "usage: $SCRIPT_NAME {test|tests} <path> [test-number] [file-size-mb]"
+	echo "usage: $SCRIPT_NAME {check}      <path>[[/]@[/]<snapshot-name>]"
 	echo
 	exit $1
 }
@@ -136,6 +137,7 @@ parse_path_snapshot_arg()
 	S=$MNT@$snap
 	SNAPTEST="ovlsnaptest"
 	TESTDIR="$SNAPMNT/$SNAPTEST"
+	BACKUPDIR="$TESTDIR.bak"
 }
 
 current_snapshot()
@@ -268,7 +270,7 @@ remount_snapshot()
 umount_all_mounted_snapshots()
 {
 	mount -t snapshot | ( while read dev on path opt; do
-		$0 umount "$path"
+		$0 umount "$path" || warn "failed to umount snapshot at $path"
 	done )
 }
 
@@ -315,7 +317,7 @@ list_snapshot_mounts()
 list_all_mounted_snapshots()
 {
 	mount -t snapshot | ( while read dev on path opt; do
-		$0 list "$path"
+		$0 list "$path" || warn "failed to list snapshot at $path"
 	done )
 }
 
@@ -333,15 +335,15 @@ show_all_mounted_snapshots()
 snapshot_status()
 {
 	if ! snapshot_exists ; then
-		info "No $FSTYPE snapshots at '$MNT'."
+		info "No $FSTYPE snapshots at '$MNT'"
 		return 1
 	fi
 
 	S=$MNT@$(current_snapshot)
 	if snapshot_is_mounted ; then
-		info "$FSTYPE snapshot $S is mounted."
+		info "$FSTYPE snapshot $S is mounted"
 	else
-		info "$FSTYPE snapshot $S is not mounted."
+		info "$FSTYPE snapshot $S is not mounted"
 	fi
 
 	echo
@@ -380,6 +382,76 @@ case "$CMD" in
 	exit 0
 	;;
 esac
+
+mktest()
+{
+	local d
+
+	for d in A B C D E; do
+		mkdir -p $TESTDIR/$d || return 1
+	done
+	echo aligator > $TESTDIR/A/a.txt && \
+		echo bizon > $TESTDIR/B/b.txt && \
+		echo camel > $TESTDIR/C/c.txt
+}
+
+csum()
+{
+	local f
+
+	cd $TESTDIR > /dev/null
+	md5sum ?/* > md5list || return 1
+	for f in $( ls *M.? 2> /dev/null ) ; do
+		md5sum $f || return 1
+	done >> md5list
+	cd - > /dev/null
+}
+
+cptest()
+{
+	local s=$1
+	local d=$TESTDIR
+	local b=$BACKUPDIR/$s
+	local f
+
+	mkdir -p $b || return 1
+	[ -d $d ] || return 1
+
+	csum || return 1
+	for f in A B C D E md5list; do
+		cp -a $d/$f $b/ || return 1
+	done
+}
+
+lstest()
+{
+	local s=$1
+	local d=$TESTDIR
+	local b=$BACKUPDIR/$s
+	local f
+
+	if [ -n "$s" ]; then
+		echo Files in snapshot $s:
+		d=$SNAPROOT/$s/_/$SNAPTEST
+		[ -d $d ] || error "no test files in snapshot $s"
+		[ -d $b ] || error "no backup files for snapshot $s"
+		for f in A B C D E md5list; do
+			diff -qr $b/$f $d/$f || error "wrong files in snapshot $s"
+		done
+	else
+		echo Files in snapshot mount:
+		[ -d $d ] || return
+	fi
+
+	cd $d > /dev/null
+	grep "" ?/* 2>/dev/null
+	echo .
+	if [ -s md5list ]; then
+		md5sum -c md5list || error "wrong checksum in snapshot"
+	fi
+	cd - > /dev/null
+	echo .
+}
 
 # Snapshot commands that take <path>[@<snapshot>] argument
 [ "$2" = help ] || parse_path_snapshot_arg "$2"
@@ -535,42 +607,6 @@ case "$CMD" in
 	;;
 
 # Snapshot sanity tests
-  mktest)
-	if [ -d $TESTDIR/A ] ; then
-		exit 0
-	fi
-	mkdir -p $TESTDIR
-	mkdir $TESTDIR/A
-	mkdir $TESTDIR/B
-	mkdir $TESTDIR/C
-	mkdir $TESTDIR/D
-	mkdir $TESTDIR/E
-	echo aligator > $TESTDIR/A/a.txt
-	echo bizon > $TESTDIR/B/b.txt
-	echo camel > $TESTDIR/C/c.txt
-	;;
-  rmtest)
-	rm -rf $TESTDIR 2> /dev/null
-	;;
-  lstest)
-	if [ -z "$snap" ] ; then
-		echo Files in snapshot mount:
-		d=$TESTDIR
-	else
-		echo "Files in snapshot $snap:"
-		d=$SNAPROOT/$snap/_/$SNAPTEST
-	fi
-	if [ -d $d ] ; then
-		cd $d > /dev/null
-		grep -v xxx ?/* 2>/dev/null
-		echo .
-		if [ -s md5list ]; then
-			md5sum -c md5list || error "wrong checksum in snapshot"
-		fi
-		cd - > /dev/null
-		echo .
-	fi
-	;;
   tests)
 	if [ "$2" = help ]; then
 		echo "tests: run snapshot sanity tests 1..N."
@@ -580,17 +616,19 @@ case "$CMD" in
 	fi
 	N=4
 	[ -z "$3" ] || N=$3
-	$0 umount $MNT
+	if snapshot_is_mounted; then
+		$0 umount $MNT || error "failed to umount snapshots"
+	fi
 	for s in $( cat $SNAPSHOTS 2> /dev/null ) ; do
-		$0 remove $SNAPDIR/$s 2> /dev/null
+		$0 remove $SNAPDIR/$s 2> /dev/null || warn "failed to remove snapshot $s"
 	done
-	$0 mount $MNT
+	$0 mount $MNT || error "failed to mount snapshots"
 	for n in $( seq 0 $N ) ; do
 		$0 test $MNT $n $4 || exit 1
 	done
-	$0 lstest $MNT
+	lstest
 	for n in $( seq 1 $N ) ; do
-		$0 lstest $SNAPDIR/$n
+		lstest $n
 	done
 	ok
 	echo .
@@ -605,10 +643,12 @@ case "$CMD" in
 	n=1
 	[ -z "$3" ] || n=$3
 	if [ "$n" = 0 ] ; then
-		$0 rmtest $MNT
+		rm -rf $TESTDIR $BACKUPDIR 2> /dev/null
 		exit 0
 	fi
-	$0 mktest $MNT
+	if [ "$n" = 1 ] ; then
+		mktest || error "failed to create test files"
+	fi
 	echo
 	echo Running snapshot test $n:
 	echo ------------------------
@@ -635,12 +675,10 @@ case "$CMD" in
 		dd if=/dev/urandom bs=1M count=$M of=$F.1 $INPLACE $DIRECT status=noxfer \
 			2>/dev/null || exit 1
 	done
-	for i in $( seq 1 $n ) ; do
-		md5sum $F.$i || exit 1
-	done >> md5list
 	cd - > /dev/null
 	echo .
-	$0 lstest $MNT || exit 1
+	cptest $n || error "failed to backup test files"
+	lstest
 	s=$n
 	$0 take $SNAPDIR/$s || exit 1
 	case "$n" in
@@ -677,17 +715,24 @@ case "$CMD" in
 		cp -R $SNAPROOT/$f/_/$SNAPTEST/? $TESTDIR/
 	  ;;
 	esac || exit 1
-	cd $TESTDIR > /dev/null
-	md5sum ?/* > md5list || exit 1
-	cd - > /dev/null
 	echo .
-	$0 lstest $MNT || exit 1
-	$0 lstest $SNAPDIR/$s || exit 1
-	$0 list $MNT
+	csum || error "failed to calc checksum of files"
+	lstest
+	lstest $s
+	$0 list $MNT || exit 1
 	ok
 	echo .
 	;;
 
+  check)
+	if [ "$2" = help ]; then
+		echo "check: verify content of test snapshot."
+		echo "usage: $SCRIPT_NAME check <path>[[/]@[/]<snapshot-name>]"
+		exit 0
+	fi
+	lstest $snap
+	echo .
+	;;
   *)
 	usage 1
 esac
