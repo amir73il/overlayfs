@@ -1,13 +1,13 @@
 #!/bin/sh
 # mount.snapshot <dev> <mnt> [-o <opt>]
-# mount.snapshot <dev> <mnt>/@/_
-# mount.snapshot <dev> <mnt>/@/_ -o remount
+# mount.snapshot <dev> <mnt>@/_
+# mount.snapshot <dev> <mnt>@/_ -o remount
 #
 # Overlayfs snapshot mount helper
 #
-# - Check if snapshots stack exists at <mnt>/@/.snapshots
-# - Mount (or remount) snapshot mount at <mnt>/@/_
-# - Mount snapshot overlays at <mnt>/@/<id>/_
+# - Check if snapshots stack exists at <mnt>@/.snapshots
+# - Mount (or remount) snapshot mount at <mnt>@/_
+# - Mount snapshot overlays at <mnt>@/<id>/_
 #
 # * If any mount flags other than -o rw[,remount] are passed to helper,
 #   it passes the command as is without doing the above
@@ -77,9 +77,9 @@ if ( echo "$mntopts" | grep -q remount ) ; then
 	REMOUNT=true
 fi
 
-# Try to parse <mnt> from <mnt>/@/_
+# Try to parse <mnt> from <mnt>@/_
 mntdir="$mnt"
-mnt="${mntdir%/@/_}"
+mnt="${mntdir%@/_}"
 [ "$mnt" != "$mntdir" ] || mount_internal
 
 if $REMOUNT; then
@@ -88,9 +88,9 @@ if $REMOUNT; then
 	mntopts="rw,remount"
 	# snapshot overlays do not support remount -
 	# they have to be umounted/mounted
-	umount -i "$mnt"/@/*/_ 2>/dev/null
+	umount -i "$mnt"@/*/_ 2>/dev/null
 else
-	# Verify snapshot is not already mounted on <mnt>/@/_
+	# Verify snapshot is not already mounted on <mnt>@/_
 	mount -t snapshot | while read d on m opt; do
 		[ "$m" != "$mntdir" -a "$m" != "$mnt" ] || \
 			error "overlayfs snapshot already mounted at '$m'."
@@ -106,7 +106,7 @@ snapmntopts="noatime,index=on,nfs_export=on,redirect_dir=origin"
 oldsnapmntopts="noatime"
 
 lower="$mnt"
-snapdir="$mnt/@"
+snapdir="$mnt@"
 snapshots="$snapdir/.snapshots"
 [ ! -s "$snapshots" ] || id=$(tail -n 1 "$snapshots")
 
@@ -119,10 +119,10 @@ if [ -z "$id" ]; then
 	exit 0
 fi
 
-cd "$lower" || exit 1
+cd "$snapdir" || exit 1
 
 # Relative to $lower to keep overlay mount options shorter
-current="@/$id"
+current="$id"
 upper="$current/u"
 work="$current/w"
 snapmnt="$current/_"
@@ -144,7 +144,7 @@ mount_old_snapshots()
 	# mount snapshots from newest to oldest
 	tac "$snapshots" | while read old; do
 		[ "$old" != "$id" ] || continue
-		oldsnap="@/$old"
+		oldsnap="$old"
 		oldmnt="$oldsnap/_"
 		[ -d "$oldsnap" ] || continue
 		[ -d "$oldmnt" ] || continue

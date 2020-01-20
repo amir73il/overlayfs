@@ -85,17 +85,17 @@ usage()
 	echo "$FSTYPE snapshot commands:"
 	echo "usage: $SCRIPT_NAME {status|list}  [<path>|-a]"
 	echo "usage: $SCRIPT_NAME {umount|mount} [<path>|-a]"
-	echo "usage: $SCRIPT_NAME {create|take}  <path>[[/]@[/]<snapshot-name>] (default-name=<date.time>)"
-	echo "usage: $SCRIPT_NAME {delete|remove} <path>[/]@[/]<snapshot-name>"
+	echo "usage: $SCRIPT_NAME {create|take}  <path>[@[/]<snapshot-name>] (default-name=<date.time>)"
+	echo "usage: $SCRIPT_NAME {delete|remove} <path>@[/]<snapshot-name>"
 	echo "usage: $SCRIPT_NAME {clean}         <path>"
 	echo
 	echo "snapshot command parameter may be given in ZFS style <path>@<snapshot-name>"
-        echo "and it may be given as the snapshot directory path <path>/@/<snapshot-name>."
+        echo "and it may be given as the snapshot directory path <path>@/<snapshot-name>."
 	echo "If <snapshot-name> part is omitted, command may apply to all snapshots (e.g. umount)."
 	echo
 	echo "$FSTYPE snapshot test commands:"
 	echo "usage: $SCRIPT_NAME {test|tests} <path> [test-number] [file-size-mb]"
-	echo "usage: $SCRIPT_NAME {check}      <path>[[/]@[/]<snapshot-name>]"
+	echo "usage: $SCRIPT_NAME {check}      <path>[@[/]<snapshot-name>]"
 	echo
 	exit $1
 }
@@ -117,10 +117,10 @@ parse_path_snapshot_arg()
 	MNT=${1%/}
 	snap=${2#/}
 	# directory inside <path> to store snapshot related files
-	SNAPDIR=$MNT/@
+	SNAPDIR=$MNT@
 	# directory prefix for snapshot mount points
 	# snaphot mount points will be created as $SNAPROOT/<snapshot-name>/_
-	SNAPROOT=$MNT/@
+	SNAPROOT=$MNT@
 	SNAPMNT=$SNAPROOT/_
 	# file to store snapshots stack
 	SNAPSHOTS="$SNAPDIR/.snapshots"
@@ -484,7 +484,7 @@ case "$CMD" in
   create|take)
 	if [ "$2" = help ]; then
 		echo "$CMD: create a new snapshot."
-		echo "usage: $SCRIPT_NAME {create|take} <path>[[/]@[/]<snapshot-name>] (default-name=<date.time>)"
+		echo "usage: $SCRIPT_NAME {create|take} <path>[@[/]<snapshot-name>] (default-name=<date.time>)"
 		exit 0
 	fi
 	if [ -z "$snap" ] ; then
@@ -507,7 +507,7 @@ case "$CMD" in
 		echo "delete: umount a snapshot and mark it for deletion."
 		echo "any non-mounted snapshot can be marked for deletion"
 		echo "but some snapshot deletion is deferred to later time."
-		echo "usage: $SCRIPT_NAME delete <path>[/]@[/]<snapshot-name>"
+		echo "usage: $SCRIPT_NAME delete <path>@[/]<snapshot-name>"
 		exit 0
 	fi
 	[ -n "$snap" ] || usage 1
@@ -530,7 +530,7 @@ case "$CMD" in
 		echo "remove: delete a snapshot permanently."
 		echo "this command will fail for active snapshot and snapshots"
 		echo "in use by older snapshots. try using the delete command."
-		echo "usage: $SCRIPT_NAME remove <path>[/]@[/]<snapshot-name>"
+		echo "usage: $SCRIPT_NAME remove <path>@[/]<snapshot-name>"
 		exit 0
 	fi
 	[ -n "$snap" ] || usage 1
@@ -727,7 +727,7 @@ case "$CMD" in
   check)
 	if [ "$2" = help ]; then
 		echo "check: verify content of test snapshot."
-		echo "usage: $SCRIPT_NAME check <path>[[/]@[/]<snapshot-name>]"
+		echo "usage: $SCRIPT_NAME check <path>[@[/]<snapshot-name>]"
 		exit 0
 	fi
 	lstest $snap

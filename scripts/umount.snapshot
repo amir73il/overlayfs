@@ -1,13 +1,13 @@
 #!/bin/sh
 # umount.snapshot <mnt>
-# umount.snapshot <mnt>/@/_
+# umount.snapshot <mnt>@/_
 #
 # Overlayfs snapshot umount helper
 #
-# - Unmount snapshot overlays <mnt>/@/*/_
-# - Unmount snapshot mount at <mnt>/@/_
+# - Unmount snapshot overlays <mnt>@/*/_
+# - Unmount snapshot mount at <mnt>@/_
 #
-# * If mount point does not end with /@/_, pass the command as is
+# * If mount point does not end with @/_, pass the command as is
 #   without doing the above
 #
 #-----------------------------------------------------------------------
@@ -34,17 +34,17 @@ mnt="${1%/}"
 
 [ -d "$mnt" ] || exit 1
 
-# Try to parse <mnt> from <mnt>/@/_
+# Try to parse <mnt> from <mnt>@/_
 mntdir="$mnt"
-mnt="${mntdir%/@/_}"
+mnt="${mntdir%@/_}"
 
-# If mount point doesn't end with /@/_ bypass helper.
+# If mount point doesn't end with @/_ bypass helper.
 if [ "$mnt" = "$mntdir" ]; then
 	echo "$*" > /tmp/umount.snapshot.in
 	exec umount -i $*
 fi
 
-snapdir="$mnt/@"
+snapdir="$mnt@"
 snapshots="$snapdir/.snapshots"
 
 umount_snapshots()
